@@ -4,7 +4,7 @@ const url = require('url');
 
 // ===== VARIÁVEIS DE AMBIENTE =====
 const NICKS = (process.env.NICKS || 'bolinhogostoso,bolinhogostoso1').split(',').map(n => n.trim());
-const SERVER_HOST = process.env.SERVER_HOST || 'sd-br3.blazebr.com';
+const SERVER_HOST = process.env.SERVER_HOST || 'NADA POR AQUI HEHE';
 const SERVER_PORT = parseInt(process.env.SERVER_PORT || '26280', 10);
 
 // Storage global dos bots
