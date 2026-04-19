@@ -3,9 +3,9 @@ const http = require('http');
 const url = require('url');
 
 // ===== VARIÁVEIS DE AMBIENTE =====
-const NICKS = (process.env.NICKS || 'Bot1,Bot2').split(',').map(n => n.trim());
-const SERVER_HOST = process.env.SERVER_HOST || 'localhost';
-const SERVER_PORT = parseInt(process.env.SERVER_PORT || '25565', 10);
+const NICKS = (process.env.NICKS || 'bolinhogostoso,bolinhogostoso1').split(',').map(n => n.trim());
+const SERVER_HOST = process.env.SERVER_HOST || 'sd-br3.blazebr.com';
+const SERVER_PORT = parseInt(process.env.SERVER_PORT || '26280', 10);
 
 // Storage global dos bots
 let bots = [];
