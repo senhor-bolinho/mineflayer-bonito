@@ -1,54 +1,49 @@
 const mineflayer = require('mineflayer');
 const readline = require('readline');
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+// ===== VARIÁVEIS DE AMBIENTE =====
+const NICKS = (process.env.NICKS || 'Bot1,Bot2').split(',').map(n => n.trim());
+const SERVER_HOST = process.env.SERVER_HOST || 'localhost';
+const SERVER_PORT = parseInt(process.env.SERVER_PORT || '25565', 10);
+
+// Configuração HTTP para Render
 const http = require('http');
 const server = http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot rodando!');
 });
 
-function askQuestion(query) {
-  return new Promise(resolve => rl.question(query, ans => resolve(ans.trim())));
-}
+server.listen(process.env.PORT || 10000, '0.0.0.0', () => {
+  console.log(`✅ Servidor HTTP rodando na porta ${process.env.PORT || 10000}`);
+});
+
+// Readline para modo local (se não estiver no Render)
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
 
 async function main() {
   console.log('=== Gerenciador de Contas Minecraft Offline (mineflayer) ===\n');
+  console.log(`📋 Configuração:`);
+  console.log(`   Nicks: ${NICKS.join(', ')}`);
+  console.log(`   Servidor: ${SERVER_HOST}:${SERVER_PORT}`);
+  console.log(`   Total de bots: ${NICKS.length}\n`);
 
-  const count = parseInt(await askQuestion('Quantas contas? '));
-  if (isNaN(count) || count <= 0) {
-    console.log('Número inválido.');
-    rl.close();
-    return;
-  }
+  const usernames = NICKS;
+  const host = SERVER_HOST;
+  const port = SERVER_PORT;
 
-  const usernames = [];
-  for (let i = 0; i < count; i++) {
-    const nick = await askQuestion(`Nick da conta ${i + 1}: `);
-    if (!nick) {
-      console.log('Nick não pode estar vazio.');
-      rl.close();
-      return;
-    }
-    usernames.push(nick);
-  }
-
-  const host = await askQuestion('IP do servidor: ');
-  const portStr = await askQuestion('Porta do servidor: ');
-  const port = parseInt(portStr, 10);
-  if (isNaN(port)) {
-    console.log('Porta inválida.');
-    rl.close();
-    return;
+  if (!host || isNaN(port) || port <= 0 || port > 65535) {
+    console.error('❌ Erro: Configurações inválidas!');
+    console.error('   Verifique SERVER_HOST e SERVER_PORT');
+    process.exit(1);
   }
 
   const version = false; // Let mineflayer auto-detect version
   const bots = [];
 
-  console.log('\nConectando bots...\n');
+  console.log('🤖 Conectando bots...\n');
   for (let i = 0; i < usernames.length; i++) {
     const username = usernames[i];
     const bot = mineflayer.createBot({
@@ -63,23 +58,23 @@ async function main() {
     bot.ready = false;
 
     bot.once('spawn', () => {
-      console.log(`[${username}] Conectado ao servidor ${host}:${port}`);
+      console.log(`✅ [${username}] Conectado ao servidor ${host}:${port}`);
       bot.ready = true;
     });
 
     bot.on('chat', (sender, message) => {
       // Ignore own messages to avoid echo
       if (sender === bot.username) return;
-      console.log(`[${sender}] ${message}`);
+      console.log(`💬 [${sender}] ${message}`);
     });
 
     bot.on('end', () => {
-      console.log(`[${username}] Desconectado.`);
+      console.log(`❌ [${username}] Desconectado.`);
       bot.ready = false;
     });
 
     bot.on('error', err => {
-      console.log(`[${username}] Erro:`, err.message);
+      console.log(`⚠️  [${username}] Erro:`, err.message);
     });
 
     bots.push(bot);
@@ -112,7 +107,7 @@ async function main() {
   }
 
   // Set up stdin to send commands to bots
-  console.log('\nDigite mensagens ou comandos.');
+  console.log('\n📝 Comandos disponíveis:');
   console.log('Formato para enviar para um bot específico: <nick>: <mensagem>');
   console.log('Exemplo: Bot1: /logar ahahah123');
   console.log('Exemplo: Bot1: Oi, todos!');
@@ -140,16 +135,16 @@ async function main() {
       switch (cmd) {
         case '$slot': {
           if (args.length === 0) {
-            console.log('Erro: comando $slot requer <numero> (0-8)');
+            console.log('❌ Erro: comando $slot requer <numero> (0-8)');
             return;
           }
           const slotNum = parseInt(args[0], 10);
           if (isNaN(slotNum)) {
-            console.log('Erro: numero do slot deve ser um número inteiro.');
+            console.log('❌ Erro: numero do slot deve ser um número inteiro.');
             return;
           }
           if (slotNum < 0 || slotNum > 8) {
-            console.log('Erro: numero do slot deve estar entre 0 e 8 (hotbar).');
+            console.log('❌ Erro: numero do slot deve estar entre 0 e 8 (hotbar).');
             return;
           }
 
@@ -161,12 +156,12 @@ async function main() {
                 const heldItem = bot.heldItem;
                 const itemName = heldItem && heldItem.type > 0 ? heldItem.name : 'ar';
                 const itemCount = heldItem && heldItem.type > 0 ? heldItem.count : 0;
-                console.log(`[${bot.username}] Slot hotbar selecionado: ${slotNum}. Item na mão: ${itemName} (${itemCount})`);
+                console.log(`📦 [${bot.username}] Slot hotbar selecionado: ${slotNum}. Item na mão: ${itemName} (${itemCount})`);
               } catch (error) {
-                console.log(`[${bot.username}] Erro ao selecionar slot: ${error.message}`);
+                console.log(`❌ [${bot.username}] Erro ao selecionar slot: ${error.message}`);
               }
             } else {
-              console.log(`[${bot.username}] Bot não está pronto.`);
+              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
             }
           }
           break;
@@ -178,27 +173,27 @@ async function main() {
             if (bot.ready) {
               try {
                 const slots = bot.inventory.slots;
-                let invText = `[INVENTARIO DO ${bot.username}]:\n`;
+                let invText = `📋 [INVENTARIO DO ${bot.username}]:\n`;
                 let hasItems = false;
 
                 for (let i = 0; i < slots.length; i++) {
                   const item = slots[i];
                   if (item && item.type > 0) { // not air
                     hasItems = true;
-                    invText += `Slot ${i}: ${item.name} (${item.count})\n`;
+                    invText += `   Slot ${i}: ${item.name} (${item.count})\n`;
                   }
                 }
 
                 if (!hasItems) {
-                  invText += ' (vazio)\n';
+                  invText += '   (vazio)\n';
                 }
 
                 console.log(invText);
               } catch (error) {
-                console.log(`[${bot.username}] Erro ao listar inventário: ${error.message}`);
+                console.log(`❌ [${bot.username}] Erro ao listar inventário: ${error.message}`);
               }
             } else {
-              console.log(`[${bot.username}] Bot não está pronto.`);
+              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
             }
           }
           break;
@@ -221,7 +216,7 @@ async function main() {
                   // Find specific item by name
                   const result = findItemByName(bot, itemName);
                   if (!result) {
-                    console.log(`[${bot.username}] Item "${itemName}" não encontrado no inventário.`);
+                    console.log(`❌ [${bot.username}] Item "${itemName}" não encontrado no inventário.`);
                     continue;
                   }
                   itemToDrop = result.item;
@@ -230,7 +225,7 @@ async function main() {
                   // Drop item in hand
                   itemToDrop = bot.heldItem;
                   if (!itemToDrop || itemToDrop.type === 0) {
-                    console.log(`[${bot.username}] Nada na mão para dropar.`);
+                    console.log(`⚠️  [${bot.username}] Nada na mão para dropar.`);
                     continue;
                   }
                   // Find slot of held item (approximate - held item might not be in inventory slots)
@@ -244,17 +239,17 @@ async function main() {
 
                 bot.tossStack(itemToDrop, null, (err) => {
                   if (err) {
-                    console.log(`[${bot.username}] Erro ao dropar item: ${err.message}`);
+                    console.log(`❌ [${bot.username}] Erro ao dropar item: ${err.message}`);
                   } else {
                     const itemDesc = itemName || `${itemToDrop.name} (${itemToDrop.count})`;
-                    console.log(`[${bot.username}] Dropar item: ${itemDesc}`);
+                    console.log(`✅ [${bot.username}] Dropar item: ${itemDesc}`);
                   }
                 });
               } catch (error) {
-                console.log(`[${bot.username}] Erro ao processar comando drop: ${error.message}`);
+                console.log(`❌ [${bot.username}] Erro ao processar comando drop: ${error.message}`);
               }
             } else {
-              console.log(`[${bot.username}] Bot não está pronto.`);
+              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
             }
           }
           break;
@@ -262,7 +257,7 @@ async function main() {
 
         case '$equip': {
           if (args.length === 0) {
-            console.log('Erro: comando $equip requer <nome_item>');
+            console.log('❌ Erro: comando $equip requer <nome_item>');
             return;
           }
           const itemName = args.join(' ');
@@ -273,23 +268,23 @@ async function main() {
               try {
                 const result = findItemByName(bot, itemName);
                 if (!result) {
-                  console.log(`[${bot.username}] Item "${itemName}" não encontrado no inventário.`);
+                  console.log(`❌ [${bot.username}] Item "${itemName}" não encontrado no inventário.`);
                   continue;
                 }
 
                 const item = result.item;
                 bot.equip(item, 'hand', (err) => {
                   if (err) {
-                    console.log(`[${bot.username}] Erro ao equipar item: ${err.message}`);
+                    console.log(`❌ [${bot.username}] Erro ao equipar item: ${err.message}`);
                   } else {
-                    console.log(`[${bot.username}] Equipou item: ${item.name}`);
+                    console.log(`✅ [${bot.username}] Equipou item: ${item.name}`);
                   }
                 });
               } catch (error) {
-                console.log(`[${bot.username}] Erro ao processar comando equip: ${error.message}`);
+                console.log(`❌ [${bot.username}] Erro ao processar comando equip: ${error.message}`);
               }
             } else {
-              console.log(`[${bot.username}] Bot não está pronto.`);
+              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
             }
           }
           break;
@@ -302,22 +297,22 @@ async function main() {
               try {
                 const heldItem = bot.heldItem;
                 if (!heldItem || heldItem.type === 0) {
-                  console.log(`[${bot.username}] Nada na mão para desequipar.`);
+                  console.log(`⚠️  [${bot.username}] Nada na mão para desequipar.`);
                   continue;
                 }
 
                 bot.equip(null, 'hand', (err) => {
                   if (err) {
-                    console.log(`[${bot.username}] Erro ao desequipar item: ${err.message}`);
+                    console.log(`❌ [${bot.username}] Erro ao desequipar item: ${err.message}`);
                   } else {
-                    console.log(`[${bot.username}] Desequipou item: ${heldItem.name}`);
+                    console.log(`✅ [${bot.username}] Desequipou item: ${heldItem.name}`);
                   }
                 });
               } catch (error) {
-                console.log(`[${bot.username}] Erro ao processar comando unequip: ${error.message}`);
+                console.log(`❌ [${bot.username}] Erro ao processar comando unequip: ${error.message}`);
               }
             } else {
-              console.log(`[${bot.username}] Bot não está pronto.`);
+              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
             }
           }
           break;
@@ -325,19 +320,19 @@ async function main() {
 
         case '$move': {
           if (args.length < 2) {
-            console.log('Erro: comando $move requer <slot_origem> <slot_destino>');
+            console.log('❌ Erro: comando $move requer <slot_origem> <slot_destino>');
             return;
           }
           const srcSlot = parseInt(args[0], 10);
           const destSlot = parseInt(args[1], 10);
 
           if (isNaN(srcSlot) || isNaN(destSlot)) {
-            console.log('Erro: numeros dos slots devem ser números inteiros.');
+            console.log('❌ Erro: numeros dos slots devem ser números inteiros.');
             return;
           }
 
           if (srcSlot < 0 || srcSlot > 35 || destSlot < 0 || destSlot > 35) {
-            console.log('Erro: numeros dos slots devem estar entre 0 e 35 (inventário completo).');
+            console.log('❌ Erro: numeros dos slots devem estar entre 0 e 35 (inventário completo).');
             return;
           }
 
@@ -348,36 +343,36 @@ async function main() {
                 // Check if source slot has an item
                 const srcItem = bot.inventory.slots[srcSlot];
                 if (!srcItem || srcItem.type === 0) {
-                  console.log(`[${bot.username}] Slot de origem ${srcSlot} está vazio.`);
+                  console.log(`⚠️  [${bot.username}] Slot de origem ${srcSlot} está vazio.`);
                   continue;
                 }
 
                 // Move item: click source slot then destination slot
                 bot.clickWindow(srcSlot, 0, 0, null, (err1) => {
                   if (err1) {
-                    console.log(`[${bot.username}] Erro ao clicar slot origem: ${err1.message}`);
+                    console.log(`❌ [${bot.username}] Erro ao clicar slot origem: ${err1.message}`);
                     return;
                   }
                   bot.clickWindow(destSlot, 0, 0, null, (err2) => {
                     if (err2) {
-                      console.log(`[${bot.username}] Erro ao clicar slot destino: ${err2.message}`);
+                      console.log(`❌ [${bot.username}] Erro ao clicar slot destino: ${err2.message}`);
                     } else {
-                      console.log(`[${bot.username}] Movido item de slot ${srcSlot} para slot ${destSlot}`);
+                      console.log(`✅ [${bot.username}] Movido item de slot ${srcSlot} para slot ${destSlot}`);
                     }
                   });
                 });
               } catch (error) {
-                console.log(`[${bot.username}] Erro ao processar comando move: ${error.message}`);
+                console.log(`❌ [${bot.username}] Erro ao processar comando move: ${error.message}`);
               }
             } else {
-              console.log(`[${bot.username}] Bot não está pronto.`);
+              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
             }
           }
           break;
         }
 
         default:
-          console.log(`Comando desconhecido: ${cmd}`);
+          console.log(`❌ Comando desconhecido: ${cmd}`);
           return;
       }
       return; // Important: don't fall through to chat sending
@@ -390,9 +385,9 @@ async function main() {
       const bot = bots.find(b => b.username.toLowerCase() === targetNick.toLowerCase());
       if (bot) {
         bot.chat(command.trim());
-        console.log(`[COMANDO ENVIADO APENAS POR ${bot.username}] ${command.trim()}`);
+        console.log(`💬 [COMANDO ENVIADO APENAS POR ${bot.username}] ${command.trim()}`);
       } else {
-        console.log(`Bot com nick "${targetNick}" não encontrado. Enviando para todos os bots.`);
+        console.log(`⚠️  Bot com nick "${targetNick}" não encontrado. Enviando para todos os bots.`);
         // Fallback: send to all bots
         for (const b of bots) {
           b.chat(line);
@@ -403,13 +398,13 @@ async function main() {
       for (const bot of bots) {
         bot.chat(msg);
       }
-      console.log(`[COMANDO ENVIADO POR TODOS OS BOTS] ${msg}`);
+      console.log(`💬 [COMANDO ENVIADO POR TODOS OS BOTS] ${msg}`);
     }
   });
 
   // Handle Ctrl+C
   process.on('SIGINT', () => {
-    console.log('\nDesconectando todos os bots...');
+    console.log('\n🛑 Desconectando todos os bots...');
     for (const bot of bots) {
       bot.end();
     }
@@ -419,6 +414,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('Erro inesperado:', err);
+  console.error('❌ Erro inesperado:', err);
   rl.close();
 });
