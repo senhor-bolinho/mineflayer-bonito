@@ -5,6 +5,11 @@ const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
+const http = require('http');
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Bot rodando!');
+});
 
 function askQuestion(query) {
   return new Promise(resolve => rl.question(query, ans => resolve(ans.trim())));
