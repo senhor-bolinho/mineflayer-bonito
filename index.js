@@ -4,7 +4,7 @@ const url = require('url');
 
 // ===== VARIÁVEIS DE AMBIENTE =====
 const NICKS = (process.env.NICKS || 'bolinhogostoso,bolinhogostoso1').split(',').map(n => n.trim());
-const SERVER_HOST = process.env.SERVER_HOST || '--';
+const SERVER_HOST = process.env.SERVER_HOST || 'sd-br3.blazebr.com';
 const SERVER_PORT = parseInt(process.env.SERVER_PORT || '26280', 10);
 
 // Storage global dos bots
@@ -303,6 +303,74 @@ function startHttpServer() {
       return;
     }
 
+    // GET /disconnect - Desconectar um bot específico
+    if (pathname === '/disconnect') {
+      const { nick } = query;
+
+      if (!nick) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          error: 'Parâmetro obrigatório: nick',
+          example: '/disconnect?nick=Bot1'
+        }));
+        return;
+      }
+
+      const botIndex = bots.findIndex(b => b.username.toLowerCase() === nick.toLowerCase());
+      if (botIndex === -1) {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não encontrado` }));
+        return;
+      }
+
+      try {
+        const botToRemove = bots[botIndex];
+        botToRemove.end();
+        bots.splice(botIndex, 1);
+        
+        console.log(`❌ [API] Bot ${nick} foi desconectado`);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          status: 'ok',
+          message: `Bot "${nick}" foi desconectado com sucesso`,
+          remaining_bots: bots.length,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (error) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // GET /disconnect-all - Desconectar TODOS os bots
+    if (pathname === '/disconnect-all') {
+      try {
+        const disconnected = [];
+        for (const bot of bots) {
+          disconnected.push(bot.username);
+          bot.end();
+        }
+        bots = [];
+        
+        console.log(`❌ [API] Todos os bots foram desconectados`);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          status: 'ok',
+          message: 'Todos os bots foram desconectados com sucesso',
+          bots_disconnected: disconnected,
+          count: disconnected.length,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (error) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
     // GET / - Documentação da API
     if (pathname === '/') {
       res.writeHead(200);
@@ -317,14 +385,16 @@ function startHttpServer() {
           'GET /inventory?nick=Bot1': 'Ver inventário de um bot',
           'GET /drop?nick=Bot1&item=dirt': 'Dropar item (deixe item em branco para dropar item na mão)',
           'GET /slot?nick=Bot1&number=3': 'Selecionar slot hotbar (0-8)',
+          'GET /disconnect?nick=Bot1': 'Desconectar um bot específico',
+          'GET /disconnect-all': 'Desconectar TODOS os bots',
           'GET /': 'Esta documentação'
         },
         examples: {
-          chat_one: 'http://localhost:10000/chat?nick=Bot1&message=Olá%20pessoal',
-          chat_all: 'http://localhost:10000/chat-all?message=Olá%20galera',
-          inventory: 'http://localhost:10000/inventory?nick=Bot1',
-          drop: 'http://localhost:10000/drop?nick=Bot1&item=dirt',
-          slot: 'http://localhost:10000/slot?nick=Bot1&number=5'
+          chat_one: 'https://seu-app.onrender.com/chat?nick=Bot1&message=Olá%20pessoal',
+          chat_all: 'https://seu-app.onrender.com/chat-all?message=Olá%20galera',
+          inventory: 'https://seu-app.onrender.com/inventory?nick=Bot1',
+          disconnect_one: 'https://seu-app.onrender.com/disconnect?nick=Bot1',
+          disconnect_all: 'https://seu-app.onrender.com/disconnect-all'
         }
       }, null, 2));
       return;
@@ -343,6 +413,27 @@ function startHttpServer() {
     console.log(`📖 Documentação: http://localhost:${process.env.PORT || 10000}/\n`);
   });
 }
+
+// ===== GRACEFUL SHUTDOWN =====
+async function gracefulShutdown() {
+  console.log('\n🛑 Desconectando todos os bots...');
+  for (const bot of bots) {
+    try {
+      bot.end();
+      console.log(`✅ [${bot.username}] Desconectado`);
+    } catch (err) {
+      console.log(`⚠️  Erro ao desconectar ${bot.username}: ${err.message}`);
+    }
+  }
+  // Espera um pouco antes de sair
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  console.log('🏁 Servidor encerrado com sucesso');
+  process.exit(0);
+}
+
+// Ao receber sinal de shutdown
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
 async function main() {
   // Iniciar servidor HTTP
@@ -415,18 +506,12 @@ async function main() {
   console.log('   GET /chat?nick=Bot1&message=Oi%20pessoal');
   console.log('   GET /chat-all?message=Oi%20galera');
   console.log('   GET /inventory?nick=Bot1');
+  console.log('   GET /disconnect?nick=Bot1');
+  console.log('   GET /disconnect-all');
   console.log('   GET /bots\n');
-
-  // Handle Ctrl+C
-  process.on('SIGINT', () => {
-    console.log('\n🛑 Desconectando todos os bots...');
-    for (const bot of bots) {
-      bot.end();
-    }
-    process.exit(0);
-  });
 }
 
 main().catch(err => {
   console.error('❌ Erro inesperado:', err);
+  gracefulShutdown();
 });
