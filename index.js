@@ -1,29 +1,353 @@
 const mineflayer = require('mineflayer');
-const readline = require('readline');
+const http = require('http');
+const url = require('url');
 
 // ===== VARIÁVEIS DE AMBIENTE =====
 const NICKS = (process.env.NICKS || 'Bot1,Bot2').split(',').map(n => n.trim());
 const SERVER_HOST = process.env.SERVER_HOST || 'localhost';
 const SERVER_PORT = parseInt(process.env.SERVER_PORT || '25565', 10);
 
-// Configuração HTTP para Render
-const http = require('http');
-const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('Bot rodando!');
-});
+// Storage global dos bots
+let bots = [];
 
-server.listen(process.env.PORT || 10000, '0.0.0.0', () => {
-  console.log(`✅ Servidor HTTP rodando na porta ${process.env.PORT || 10000}`);
-});
+// ===== SERVIDOR HTTP COM API =====
+function startHttpServer() {
+  const server = http.createServer((req, res) => {
+    const parsedUrl = url.parse(req.url, true);
+    const pathname = parsedUrl.pathname;
+    const query = parsedUrl.query;
 
-// Readline para modo local (se não estiver no Render)
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+    // CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Content-Type', 'application/json');
+
+    // OPTIONS para CORS
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    // ===== ROTAS =====
+
+    // GET /health - Status do servidor
+    if (pathname === '/health') {
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        status: 'ok',
+        bots_total: bots.length,
+        bots_connected: bots.filter(b => b.ready).length,
+        timestamp: new Date().toISOString()
+      }));
+      return;
+    }
+
+    // GET /bots - Listar todos os bots
+    if (pathname === '/bots') {
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        bots: bots.map(b => ({
+          username: b.username,
+          ready: b.ready,
+          health: b.health?.hp || 0,
+          hunger: b.food || 0,
+          dimension: b.dimension || 'unknown'
+        }))
+      }));
+      return;
+    }
+
+    // GET /chat - Enviar mensagem (chat)
+    if (pathname === '/chat') {
+      const { nick, message } = query;
+
+      if (!nick || !message) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ 
+          error: 'Parâmetros obrigatórios: nick e message',
+          example: '/chat?nick=Bot1&message=Oi%20pessoal'
+        }));
+        return;
+      }
+
+      const bot = bots.find(b => b.username.toLowerCase() === nick.toLowerCase());
+      if (!bot) {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não encontrado` }));
+        return;
+      }
+
+      if (!bot.ready) {
+        res.writeHead(503);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não está pronto` }));
+        return;
+      }
+
+      bot.chat(message);
+      console.log(`💬 [API] [${nick}] ${message}`);
+      
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        status: 'ok',
+        bot: nick,
+        message: message,
+        timestamp: new Date().toISOString()
+      }));
+      return;
+    }
+
+    // GET /chat-all - Enviar para todos os bots
+    if (pathname === '/chat-all') {
+      const { message } = query;
+
+      if (!message) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          error: 'Parâmetro obrigatório: message',
+          example: '/chat-all?message=Oi%20galera'
+        }));
+        return;
+      }
+
+      const sent = [];
+      for (const bot of bots) {
+        if (bot.ready) {
+          bot.chat(message);
+          sent.push(bot.username);
+        }
+      }
+
+      console.log(`💬 [API] [TODOS] ${message}`);
+
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        status: 'ok',
+        message: message,
+        bots_sent: sent,
+        count: sent.length,
+        timestamp: new Date().toISOString()
+      }));
+      return;
+    }
+
+    // GET /inventory - Ver inventário de um bot
+    if (pathname === '/inventory') {
+      const { nick } = query;
+
+      if (!nick) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          error: 'Parâmetro obrigatório: nick',
+          example: '/inventory?nick=Bot1'
+        }));
+        return;
+      }
+
+      const bot = bots.find(b => b.username.toLowerCase() === nick.toLowerCase());
+      if (!bot) {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não encontrado` }));
+        return;
+      }
+
+      if (!bot.ready) {
+        res.writeHead(503);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não está pronto` }));
+        return;
+      }
+
+      const items = [];
+      for (let i = 0; i < bot.inventory.slots.length; i++) {
+        const item = bot.inventory.slots[i];
+        if (item && item.type > 0) {
+          items.push({
+            slot: i,
+            name: item.name,
+            count: item.count,
+            type: item.type
+          });
+        }
+      }
+
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        bot: nick,
+        inventory: items,
+        total_items: items.length,
+        heldItem: bot.heldItem ? {
+          name: bot.heldItem.name,
+          count: bot.heldItem.count
+        } : null
+      }));
+      return;
+    }
+
+    // GET /drop - Dropar item
+    if (pathname === '/drop') {
+      const { nick, item } = query;
+
+      if (!nick) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          error: 'Parâmetro obrigatório: nick',
+          example: '/drop?nick=Bot1&item=dirt (ou deixe em branco para dropar item na mão)'
+        }));
+        return;
+      }
+
+      const bot = bots.find(b => b.username.toLowerCase() === nick.toLowerCase());
+      if (!bot) {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não encontrado` }));
+        return;
+      }
+
+      if (!bot.ready) {
+        res.writeHead(503);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não está pronto` }));
+        return;
+      }
+
+      try {
+        if (item) {
+          // Dropar item específico
+          const foundItem = bot.inventory.slots.find(s => s && s.name && s.name.toLowerCase() === item.toLowerCase());
+          if (!foundItem) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: `Item "${item}" não encontrado no inventário` }));
+            return;
+          }
+          bot.tossStack(foundItem);
+          console.log(`✅ [API] [${nick}] Dropou item: ${item}`);
+        } else {
+          // Dropar item na mão
+          const heldItem = bot.heldItem;
+          if (!heldItem || heldItem.type === 0) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Nada na mão para dropar' }));
+            return;
+          }
+          bot.tossStack(heldItem);
+          console.log(`✅ [API] [${nick}] Dropou item na mão`);
+        }
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          status: 'ok',
+          bot: nick,
+          action: 'dropped',
+          item: item || 'held item',
+          timestamp: new Date().toISOString()
+        }));
+      } catch (error) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // GET /slot - Selecionar slot hotbar
+    if (pathname === '/slot') {
+      const { nick, number } = query;
+
+      if (!nick || !number) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          error: 'Parâmetros obrigatórios: nick e number (0-8)',
+          example: '/slot?nick=Bot1&number=3'
+        }));
+        return;
+      }
+
+      const slotNum = parseInt(number, 10);
+      if (isNaN(slotNum) || slotNum < 0 || slotNum > 8) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Slot deve estar entre 0 e 8' }));
+        return;
+      }
+
+      const bot = bots.find(b => b.username.toLowerCase() === nick.toLowerCase());
+      if (!bot) {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não encontrado` }));
+        return;
+      }
+
+      if (!bot.ready) {
+        res.writeHead(503);
+        res.end(JSON.stringify({ error: `Bot "${nick}" não está pronto` }));
+        return;
+      }
+
+      try {
+        bot.setQuickBarSlot(slotNum);
+        const heldItem = bot.heldItem;
+        const itemName = heldItem && heldItem.type > 0 ? heldItem.name : 'ar';
+        
+        console.log(`✅ [API] [${nick}] Slot selecionado: ${slotNum}`);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          status: 'ok',
+          bot: nick,
+          slot: slotNum,
+          held_item: itemName,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (error) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // GET / - Documentação da API
+    if (pathname === '/') {
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        name: 'Mineflayer Bot Manager API',
+        version: '1.0.0',
+        endpoints: {
+          'GET /health': 'Status do servidor e bots',
+          'GET /bots': 'Listar todos os bots',
+          'GET /chat?nick=Bot1&message=Oi': 'Enviar mensagem com um bot específico',
+          'GET /chat-all?message=Oi': 'Enviar mensagem com todos os bots',
+          'GET /inventory?nick=Bot1': 'Ver inventário de um bot',
+          'GET /drop?nick=Bot1&item=dirt': 'Dropar item (deixe item em branco para dropar item na mão)',
+          'GET /slot?nick=Bot1&number=3': 'Selecionar slot hotbar (0-8)',
+          'GET /': 'Esta documentação'
+        },
+        examples: {
+          chat_one: 'http://localhost:10000/chat?nick=Bot1&message=Olá%20pessoal',
+          chat_all: 'http://localhost:10000/chat-all?message=Olá%20galera',
+          inventory: 'http://localhost:10000/inventory?nick=Bot1',
+          drop: 'http://localhost:10000/drop?nick=Bot1&item=dirt',
+          slot: 'http://localhost:10000/slot?nick=Bot1&number=5'
+        }
+      }, null, 2));
+      return;
+    }
+
+    // 404
+    res.writeHead(404);
+    res.end(JSON.stringify({
+      error: 'Rota não encontrada',
+      available_routes: 'GET /'
+    }));
+  });
+
+  server.listen(process.env.PORT || 10000, '0.0.0.0', () => {
+    console.log(`\n✅ Servidor HTTP rodando em http://localhost:${process.env.PORT || 10000}`);
+    console.log(`📖 Documentação: http://localhost:${process.env.PORT || 10000}/\n`);
+  });
+}
 
 async function main() {
+  // Iniciar servidor HTTP
+  startHttpServer();
+
   console.log('=== Gerenciador de Contas Minecraft Offline (mineflayer) ===\n');
   console.log(`📋 Configuração:`);
   console.log(`   Nicks: ${NICKS.join(', ')}`);
@@ -41,7 +365,6 @@ async function main() {
   }
 
   const version = false; // Let mineflayer auto-detect version
-  const bots = [];
 
   console.log('🤖 Conectando bots...\n');
   for (let i = 0; i < usernames.length; i++) {
@@ -88,319 +411,11 @@ async function main() {
   // Wait a bit for all bots to spawn
   await new Promise(resolve => setTimeout(resolve, 2000));
 
-  // Helper function to find bot by nick (case insensitive)
-  function findBotByNick(nick) {
-    return bots.find(bot => bot.username.toLowerCase() === nick.toLowerCase());
-  }
-
-  // Helper function to find item by name in bot's inventory (case insensitive)
-  function findItemByName(bot, itemName) {
-    if (!bot || !bot.inventory) return null;
-    const slots = bot.inventory.slots;
-    for (let i = 0; i < slots.length; i++) {
-      const item = slots[i];
-      if (item && item.name && item.name.toLowerCase() === itemName.toLowerCase() && item.type > 0) {
-        return { item, slot: i };
-      }
-    }
-    return null;
-  }
-
-  // Set up stdin to send commands to bots
-  console.log('\n📝 Comandos disponíveis:');
-  console.log('Formato para enviar para um bot específico: <nick>: <mensagem>');
-  console.log('Exemplo: Bot1: /logar ahahah123');
-  console.log('Exemplo: Bot1: Oi, todos!');
-  console.log('Comandos de inventário (não precisam do formato <nick>: ):');
-  console.log('  $slot <numero> - seleciona slot da hotbar (0-8)');
-  console.log('  $inv - lista o inventário completo');
-  console.log('  $drop - dropa item na mão');
-  console.log('  $drop <nome_item> - dropa item específico pelo nome');
-  console.log('  $equip <nome_item> - equipa item na mão');
-  console.log('  $unequip - remove item da mão');
-  console.log('  $move <slot_origem> <slot_destino> - move item entre slots (0-35)');
-  console.log('Se não usar o formato acima e não for um comando de inventário, a mensagem será enviada por todos os bots.\n');
-
-  rl.on('line', line => {
-    const msg = line.trim();
-    if (!msg) return;
-
-    // Check for inventory commands (starting with $)
-    if (msg.startsWith('$')) {
-      const parts = msg.split(' ');
-      const cmd = parts[0];
-      const args = parts.slice(1);
-
-      // Process inventory commands
-      switch (cmd) {
-        case '$slot': {
-          if (args.length === 0) {
-            console.log('❌ Erro: comando $slot requer <numero> (0-8)');
-            return;
-          }
-          const slotNum = parseInt(args[0], 10);
-          if (isNaN(slotNum)) {
-            console.log('❌ Erro: numero do slot deve ser um número inteiro.');
-            return;
-          }
-          if (slotNum < 0 || slotNum > 8) {
-            console.log('❌ Erro: numero do slot deve estar entre 0 e 8 (hotbar).');
-            return;
-          }
-
-          // Apply to all bots that are ready
-          for (const bot of bots) {
-            if (bot.ready) {
-              try {
-                bot.setQuickBarSlot(slotNum);
-                const heldItem = bot.heldItem;
-                const itemName = heldItem && heldItem.type > 0 ? heldItem.name : 'ar';
-                const itemCount = heldItem && heldItem.type > 0 ? heldItem.count : 0;
-                console.log(`📦 [${bot.username}] Slot hotbar selecionado: ${slotNum}. Item na mão: ${itemName} (${itemCount})`);
-              } catch (error) {
-                console.log(`❌ [${bot.username}] Erro ao selecionar slot: ${error.message}`);
-              }
-            } else {
-              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
-            }
-          }
-          break;
-        }
-
-        case '$inv': {
-          // Apply to all bots that are ready
-          for (const bot of bots) {
-            if (bot.ready) {
-              try {
-                const slots = bot.inventory.slots;
-                let invText = `📋 [INVENTARIO DO ${bot.username}]:\n`;
-                let hasItems = false;
-
-                for (let i = 0; i < slots.length; i++) {
-                  const item = slots[i];
-                  if (item && item.type > 0) { // not air
-                    hasItems = true;
-                    invText += `   Slot ${i}: ${item.name} (${item.count})\n`;
-                  }
-                }
-
-                if (!hasItems) {
-                  invText += '   (vazio)\n';
-                }
-
-                console.log(invText);
-              } catch (error) {
-                console.log(`❌ [${bot.username}] Erro ao listar inventário: ${error.message}`);
-              }
-            } else {
-              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
-            }
-          }
-          break;
-        }
-
-        case '$drop': {
-          let itemName = null;
-          if (args.length > 0) {
-            itemName = args.join(' ');
-          }
-
-          // Apply to all bots that are ready
-          for (const bot of bots) {
-            if (bot.ready) {
-              try {
-                let itemToDrop = null;
-                let slotIndex = -1;
-
-                if (itemName) {
-                  // Find specific item by name
-                  const result = findItemByName(bot, itemName);
-                  if (!result) {
-                    console.log(`❌ [${bot.username}] Item "${itemName}" não encontrado no inventário.`);
-                    continue;
-                  }
-                  itemToDrop = result.item;
-                  slotIndex = result.slot;
-                } else {
-                  // Drop item in hand
-                  itemToDrop = bot.heldItem;
-                  if (!itemToDrop || itemToDrop.type === 0) {
-                    console.log(`⚠️  [${bot.username}] Nada na mão para dropar.`);
-                    continue;
-                  }
-                  // Find slot of held item (approximate - held item might not be in inventory slots)
-                  for (let i = 0; i < bot.inventory.slots.length; i++) {
-                    if (bot.inventory.slots[i] === itemToDrop) {
-                      slotIndex = i;
-                      break;
-                    }
-                  }
-                }
-
-                bot.tossStack(itemToDrop, null, (err) => {
-                  if (err) {
-                    console.log(`❌ [${bot.username}] Erro ao dropar item: ${err.message}`);
-                  } else {
-                    const itemDesc = itemName || `${itemToDrop.name} (${itemToDrop.count})`;
-                    console.log(`✅ [${bot.username}] Dropar item: ${itemDesc}`);
-                  }
-                });
-              } catch (error) {
-                console.log(`❌ [${bot.username}] Erro ao processar comando drop: ${error.message}`);
-              }
-            } else {
-              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
-            }
-          }
-          break;
-        }
-
-        case '$equip': {
-          if (args.length === 0) {
-            console.log('❌ Erro: comando $equip requer <nome_item>');
-            return;
-          }
-          const itemName = args.join(' ');
-
-          // Apply to all bots that are ready
-          for (const bot of bots) {
-            if (bot.ready) {
-              try {
-                const result = findItemByName(bot, itemName);
-                if (!result) {
-                  console.log(`❌ [${bot.username}] Item "${itemName}" não encontrado no inventário.`);
-                  continue;
-                }
-
-                const item = result.item;
-                bot.equip(item, 'hand', (err) => {
-                  if (err) {
-                    console.log(`❌ [${bot.username}] Erro ao equipar item: ${err.message}`);
-                  } else {
-                    console.log(`✅ [${bot.username}] Equipou item: ${item.name}`);
-                  }
-                });
-              } catch (error) {
-                console.log(`❌ [${bot.username}] Erro ao processar comando equip: ${error.message}`);
-              }
-            } else {
-              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
-            }
-          }
-          break;
-        }
-
-        case '$unequip': {
-          // Apply to all bots that are ready
-          for (const bot of bots) {
-            if (bot.ready) {
-              try {
-                const heldItem = bot.heldItem;
-                if (!heldItem || heldItem.type === 0) {
-                  console.log(`⚠️  [${bot.username}] Nada na mão para desequipar.`);
-                  continue;
-                }
-
-                bot.equip(null, 'hand', (err) => {
-                  if (err) {
-                    console.log(`❌ [${bot.username}] Erro ao desequipar item: ${err.message}`);
-                  } else {
-                    console.log(`✅ [${bot.username}] Desequipou item: ${heldItem.name}`);
-                  }
-                });
-              } catch (error) {
-                console.log(`❌ [${bot.username}] Erro ao processar comando unequip: ${error.message}`);
-              }
-            } else {
-              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
-            }
-          }
-          break;
-        }
-
-        case '$move': {
-          if (args.length < 2) {
-            console.log('❌ Erro: comando $move requer <slot_origem> <slot_destino>');
-            return;
-          }
-          const srcSlot = parseInt(args[0], 10);
-          const destSlot = parseInt(args[1], 10);
-
-          if (isNaN(srcSlot) || isNaN(destSlot)) {
-            console.log('❌ Erro: numeros dos slots devem ser números inteiros.');
-            return;
-          }
-
-          if (srcSlot < 0 || srcSlot > 35 || destSlot < 0 || destSlot > 35) {
-            console.log('❌ Erro: numeros dos slots devem estar entre 0 e 35 (inventário completo).');
-            return;
-          }
-
-          // Apply to all bots that are ready
-          for (const bot of bots) {
-            if (bot.ready) {
-              try {
-                // Check if source slot has an item
-                const srcItem = bot.inventory.slots[srcSlot];
-                if (!srcItem || srcItem.type === 0) {
-                  console.log(`⚠️  [${bot.username}] Slot de origem ${srcSlot} está vazio.`);
-                  continue;
-                }
-
-                // Move item: click source slot then destination slot
-                bot.clickWindow(srcSlot, 0, 0, null, (err1) => {
-                  if (err1) {
-                    console.log(`❌ [${bot.username}] Erro ao clicar slot origem: ${err1.message}`);
-                    return;
-                  }
-                  bot.clickWindow(destSlot, 0, 0, null, (err2) => {
-                    if (err2) {
-                      console.log(`❌ [${bot.username}] Erro ao clicar slot destino: ${err2.message}`);
-                    } else {
-                      console.log(`✅ [${bot.username}] Movido item de slot ${srcSlot} para slot ${destSlot}`);
-                    }
-                  });
-                });
-              } catch (error) {
-                console.log(`❌ [${bot.username}] Erro ao processar comando move: ${error.message}`);
-              }
-            } else {
-              console.log(`⏳ [${bot.username}] Bot não está pronto.`);
-            }
-          }
-          break;
-        }
-
-        default:
-          console.log(`❌ Comando desconhecido: ${cmd}`);
-          return;
-      }
-      return; // Important: don't fall through to chat sending
-    }
-
-    // Check if the line matches the pattern: <nick>: <message>
-    const match = line.match(/^([^:]+):\s*(.+)/);
-    if (match) {
-      const [, targetNick, command] = match;
-      const bot = bots.find(b => b.username.toLowerCase() === targetNick.toLowerCase());
-      if (bot) {
-        bot.chat(command.trim());
-        console.log(`💬 [COMANDO ENVIADO APENAS POR ${bot.username}] ${command.trim()}`);
-      } else {
-        console.log(`⚠️  Bot com nick "${targetNick}" não encontrado. Enviando para todos os bots.`);
-        // Fallback: send to all bots
-        for (const b of bots) {
-          b.chat(line);
-        }
-      }
-    } else {
-      // No specific target, send to all bots
-      for (const bot of bots) {
-        bot.chat(msg);
-      }
-      console.log(`💬 [COMANDO ENVIADO POR TODOS OS BOTS] ${msg}`);
-    }
-  });
+  console.log('📝 Use a API HTTP para controlar os bots:');
+  console.log('   GET /chat?nick=Bot1&message=Oi%20pessoal');
+  console.log('   GET /chat-all?message=Oi%20galera');
+  console.log('   GET /inventory?nick=Bot1');
+  console.log('   GET /bots\n');
 
   // Handle Ctrl+C
   process.on('SIGINT', () => {
@@ -408,12 +423,10 @@ async function main() {
     for (const bot of bots) {
       bot.end();
     }
-    rl.close();
     process.exit(0);
   });
 }
 
 main().catch(err => {
   console.error('❌ Erro inesperado:', err);
-  rl.close();
 });
