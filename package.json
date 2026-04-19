@@ -1,0 +1,14 @@
+{
+  "name": "minecraft-offline-manager",
+  "version": "1.0.0",
+  "description": "Gerenciador de contas Minecraft offline usando mineflayer",
+  "main": "minecraft_offline_manager.js",
+  "scripts": {
+    "start": "node minecraft_offline_manager.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mineflayer": "^4.37.0"
+  }
+}
