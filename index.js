@@ -3,65 +3,87 @@ const http = require('http');
 const url = require('url');
 
 // ===== CONFIG =====
-const PORT = process.env.PORT || 26280;
-const SERVER_HOST = process.env.SERVER_HOST || 'sd-br3.blazebr.com';
-const SERVER_PORT = parseInt(process.env.SERVER_PORT || 'sd', 10);
-const NICKS = (process.env.NICKS || 'iamobscure,naoeobolin,naoeobolin2,naoeobolin3').split(',').map(n => n.trim());
-const PASSWORD = process.env.PASSWORD || '123';
+const PORT = 10000;
+const SERVER_HOST = 'sd-br3.blazebr.com';
+const SERVER_PORT = 26280;
+const NICKS = ['iamobscure','naoeobolin','naoeobolin2','naoeobolin3'];
+const PASSWORD = '123';
 
 // ===== STORAGE =====
 let bots = [];
+let disconnectLogs = [];
 
 // ===== CRIAR BOT =====
 function createBot(username) {
+  console.log(`🔄 Criando bot ${username}...`);
+
   const bot = mineflayer.createBot({
     host: SERVER_HOST,
     port: SERVER_PORT,
     username,
-    auth: 'offline'
+    auth: 'offline',
+    version: false
   });
 
   bot.ready = false;
 
-  bot.once('spawn', () => {
+  bot.on('login', () => {
+    console.log(`🔐 [${username}] LOGOU`);
+  });
+
+  bot.on('spawn', () => {
     bot.ready = true;
-    console.log(`✅ [${username}] conectado`);
+    console.log(`✅ [${username}] SPAWNOU (pronto)`);
   });
 
-  bot.on('end', () => {
+  bot.on('end', (reason) => {
     bot.ready = false;
-    console.log(`❌ [${username}] desconectado`);
+    console.log(`❌ [${username}] DESCONECTADO:`, reason);
+
+    disconnectLogs.push({
+      bot: username,
+      reason: reason || 'unknown',
+      time: new Date().toISOString()
+    });
   });
 
-  bot.on('error', err => {
-    console.log(`⚠️ [${username}] ${err.message}`);
+  bot.on('kicked', (reason) => {
+    console.log(`🚫 [${username}] KICKADO:`, reason);
+
+    disconnectLogs.push({
+      bot: username,
+      reason: 'KICK: ' + JSON.stringify(reason),
+      time: new Date().toISOString()
+    });
+  });
+
+  bot.on('error', (err) => {
+    console.log(`⚠️ [${username}] ERRO COMPLETO:`, err);
   });
 
   bots.push(bot);
 }
 
-// ===== API SERVER =====
+// ===== SERVER =====
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
   const path = parsed.pathname;
   const q = parsed.query;
 
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Content-Type', 'application/json');
 
-  // ===== LOGIN PAGE =====
+  // ===== LOGIN =====
   if (path === '/') {
     res.setHeader('Content-Type', 'text/html');
     return res.end(`
     <body style="background:#111;color:#fff;text-align:center;margin-top:100px;font-family:sans-serif;">
-      <h2>Login Painel</h2>
-      <input type="password" id="p" placeholder="Senha"/>
+      <h2>Login</h2>
+      <input type="password" id="p"/>
       <button onclick="go()">Entrar</button>
       <script>
         function go(){
-          if(document.getElementById('p').value === "${PASSWORD}"){
-            location='/panel';
-          } else alert('Senha errada');
+          if(document.getElementById('p').value === "${PASSWORD}") location='/panel';
+          else alert('Senha errada');
         }
       </script>
     </body>
@@ -73,51 +95,45 @@ const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'text/html');
     return res.end(`
     <html>
-    <head>
-      <style>
-        body{background:#0f172a;color:white;font-family:Arial;text-align:center}
-        .box{background:#1e293b;padding:20px;margin:20px;border-radius:12px}
-        button{padding:10px;margin:5px;border:none;border-radius:8px;cursor:pointer}
-        .g{background:#22c55e}
-        .r{background:#ef4444}
-        input{padding:10px;border-radius:8px;border:none}
-      </style>
-    </head>
-    <body>
+    <body style="background:#0f172a;color:white;font-family:Arial;text-align:center">
 
-    <h1>🤖 Dashboard Bots</h1>
+    <h1>🤖 Dashboard</h1>
 
-    <div class="box">
-      <h3>Conexão</h3>
-      <button class="g" onclick="api('/connect-all')">Connect All</button>
-      <button class="r" onclick="api('/disconnect-all')">Disconnect All</button>
-    </div>
+    <button onclick="api('/connect-all')">Connect All</button>
+    <button onclick="api('/disconnect-all')">Disconnect All</button>
 
-    <div class="box">
-      <h3>Chat Global</h3>
-      <input id="msg" placeholder="Mensagem"/>
-      <button onclick="send()">Enviar</button>
-    </div>
+    <br><br>
 
-    <div class="box">
-      <h3>Status</h3>
-      <pre id="bots">Carregando...</pre>
-      <button onclick="load()">Atualizar</button>
-    </div>
+    <input id="msg" placeholder="Mensagem"/>
+    <button onclick="chat()">Enviar Chat</button>
+
+    <h3>Status</h3>
+    <pre id="bots"></pre>
+
+    <h3>Disconnects / Kicks</h3>
+    <pre id="logs"></pre>
 
     <script>
       function api(r){
-        fetch(r).then(x=>x.json()).then(d=>alert(JSON.stringify(d,null,2)));
+        fetch(r).then(r=>r.json()).then(d=>alert(JSON.stringify(d,null,2)));
       }
-      function send(){
+
+      function chat(){
         let m=document.getElementById('msg').value;
         fetch('/chat-all?message='+encodeURIComponent(m));
       }
+
       function load(){
-        fetch('/bots').then(r=>r.json()).then(d=>{
+        fetch('/check').then(r=>r.json()).then(d=>{
           document.getElementById('bots').innerText=JSON.stringify(d,null,2);
         });
+
+        fetch('/disconnects').then(r=>r.json()).then(d=>{
+          document.getElementById('logs').innerText=JSON.stringify(d,null,2);
+        });
       }
+
+      setInterval(load,2000);
       load();
     </script>
 
@@ -126,74 +142,47 @@ const server = http.createServer((req, res) => {
     `);
   }
 
-  // ===== LISTAR BOTS =====
-  if (path === '/bots') {
+  res.setHeader('Content-Type', 'application/json');
+
+  // ===== CHECK =====
+  if (path === '/check') {
     return res.end(JSON.stringify({
+      total: bots.length,
+      online: bots.filter(b => b.ready).length,
       bots: bots.map(b => ({
         username: b.username,
-        ready: b.ready,
-        health: b.health || 0,
-        food: b.food || 0
+        ready: b.ready
       }))
-    }));
+    }, null, 2));
   }
 
-  // ===== CONNECT =====
-  if (path === '/connect') {
-    const { nick } = q;
-    if (!nick) return res.end(JSON.stringify({ error: 'nick obrigatório' }));
-
-    if (bots.find(b => b.username === nick)) {
-      return res.end(JSON.stringify({ error: 'já conectado' }));
-    }
-
-    createBot(nick);
-    return res.end(JSON.stringify({ status: 'connecting', nick }));
+  // ===== DISCONNECT LOGS =====
+  if (path === '/disconnects') {
+    return res.end(JSON.stringify(disconnectLogs, null, 2));
   }
 
   // ===== CONNECT ALL =====
   if (path === '/connect-all') {
     const added = [];
+
     for (const n of NICKS) {
       if (!bots.find(b => b.username === n)) {
         createBot(n);
         added.push(n);
       }
     }
-    return res.end(JSON.stringify({ connected: added }));
-  }
 
-  // ===== DISCONNECT =====
-  if (path === '/disconnect') {
-    const { nick } = q;
-    const i = bots.findIndex(b => b.username === nick);
-
-    if (i === -1) return res.end(JSON.stringify({ error: 'não encontrado' }));
-
-    bots[i].end();
-    bots.splice(i, 1);
-
-    return res.end(JSON.stringify({ status: 'disconnected', nick }));
+    return res.end(JSON.stringify({ connecting: added }));
   }
 
   // ===== DISCONNECT ALL =====
   if (path === '/disconnect-all') {
     const names = bots.map(b => b.username);
+
     bots.forEach(b => b.end());
     bots = [];
+
     return res.end(JSON.stringify({ disconnected: names }));
-  }
-
-  // ===== CHAT =====
-  if (path === '/chat') {
-    const { nick, message } = q;
-    const bot = bots.find(b => b.username === nick);
-
-    if (!bot) return res.end(JSON.stringify({ error: 'bot não existe' }));
-    if (!bot.ready) return res.end(JSON.stringify({ error: 'bot não pronto' }));
-
-    bot.chat(message);
-    return res.end(JSON.stringify({ ok: true }));
   }
 
   // ===== CHAT ALL =====
@@ -217,5 +206,5 @@ const server = http.createServer((req, res) => {
 
 // ===== START =====
 server.listen(PORT, () => {
-  console.log(`🚀 Rodando em http://localhost:${PORT}`);
+  console.log(`🚀 http://localhost:${PORT}`);
 });
