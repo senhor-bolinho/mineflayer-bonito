@@ -3,10 +3,10 @@ const http = require('http');
 const url = require('url');
 
 // ===== CONFIG =====
-const PORT = process.env.PORT || 10000;
-const SERVER_HOST = process.env.SERVER_HOST || 'localhost';
-const SERVER_PORT = parseInt(process.env.SERVER_PORT || '25565', 10);
-const NICKS = (process.env.NICKS || 'bot1,bot2').split(',').map(n => n.trim());
+const PORT = process.env.PORT || 26280;
+const SERVER_HOST = process.env.SERVER_HOST || 'sd-br3.blazebr.com';
+const SERVER_PORT = parseInt(process.env.SERVER_PORT || 'sd', 10);
+const NICKS = (process.env.NICKS || 'iamobscure,naoeobolin,naoeobolin2,naoeobolin3').split(',').map(n => n.trim());
 const PASSWORD = process.env.PASSWORD || '123';
 
 // ===== STORAGE =====
