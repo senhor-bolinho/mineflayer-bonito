@@ -9,8 +9,8 @@ const SERVER_PORT = 26280;
 
 const NICKS = [
   'SraArabella_',
-  'SrDoardo_'
-  'SrZusdoz_'
+  'SrDoardo_',
+  'SrZusdoz_',
 ];
 
 const PASSWORD = '123';
