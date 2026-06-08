@@ -943,40 +943,40 @@ const server = http.createServer((req, res) => {
                 statusText = '🟢 ONLINE';
               }
 
-              html += `<div class="bot-card ${connecting ? 'connecting' : ''}">
+              html += \`<div class="bot-card \${connecting ? 'connecting' : ''}">
 
-                  <button class="delete-bot-btn" onclick="deleteBot('${nick}')">
+                  <button class="delete-bot-btn" onclick="deleteBot('\${nick}')">
                     🗑️ Deletar
                   </button>
 
                   <div class="bot-header">
-                    <div class="bot-name">${nick}</div>
-                    <div class="status-badge ${statusClass}">
-                      ${statusText}
+                    <div class="bot-name">\${nick}</div>
+                    <div class="status-badge \${statusClass}">
+                      \${statusText}
                     </div>
                   </div>
 
                   <div class="bot-position">
                     <div class="position-label">📍 Posição Atual:</div>
-                    <div>X: ${posX}</div>
-                    <div>Y: ${posY}</div>
-                    <div>Z: ${posZ}</div>
+                    <div>X: \${posX}</div>
+                    <div>Y: \${posY}</div>
+                    <div>Z: \${posZ}</div>
                   </div>
 
-                  ${lastError && !online && !connecting ? `<div class="error-message">⚠️ Erro: ${lastError.substring(0, 50)}...</div>` : ''}
+                  \${lastError && !online && !connecting ? \`<div class="error-message">⚠️ Erro: \${lastError.substring(0, 50)}...</div>\` : ''}
 
-                  ${online ? `
+                  \${online ? \`
                   <div class="movement-controls">
                     <div class="empty"></div>
-                    <button class="movement-btn" onclick="moveBot('${nick}', 'forward')" title="Frente">⬆️</button>
+                    <button class="movement-btn" onclick="moveBot('\${nick}', 'forward')" title="Frente">⬆️</button>
                     <div class="empty"></div>
 
-                    <button class="movement-btn" onclick="moveBot('${nick}', 'left')" title="Esquerda">⬅️</button>
-                    <button class="movement-btn" onclick="moveBot('${nick}', 'jump')" title="Pular">⤒</button>
-                    <button class="movement-btn" onclick="moveBot('${nick}', 'right')" title="Direita">➡️</button>
+                    <button class="movement-btn" onclick="moveBot('\${nick}', 'left')" title="Esquerda">⬅️</button>
+                    <button class="movement-btn" onclick="moveBot('\${nick}', 'jump')" title="Pular">⤒</button>
+                    <button class="movement-btn" onclick="moveBot('\${nick}', 'right')" title="Direita">➡️</button>
 
                     <div class="empty"></div>
-                    <button class="movement-btn" onclick="moveBot('${nick}', 'back')" title="Trás">⬇️</button>
+                    <button class="movement-btn" onclick="moveBot('\${nick}', 'back')" title="Trás">⬇️</button>
                     <div class="empty"></div>
                   </div>
 
@@ -985,35 +985,35 @@ const server = http.createServer((req, res) => {
                     <div class="chat-input-group">
                       <input 
                         type="text" 
-                        id="msg-${nick}"
+                        id="msg-\${nick}"
                         placeholder="Mensagem..."
                       />
-                      <button onclick="sendChatIndividual('${nick}')">📨 Enviar</button>
+                      <button onclick="sendChatIndividual('\${nick}')">📨 Enviar</button>
                     </div>
                   </div>
 
                   <div class="connection-buttons">
-                    <button class="btn-connect" onclick="connectBot('${nick}')" ${connecting ? 'disabled' : ''}>
+                    <button class="btn-connect" onclick="connectBot('\${nick}')" \${connecting ? 'disabled' : ''}>
                       ✅ Conectar
                     </button>
-                    <button class="btn-disconnect" onclick="disconnectBot('${nick}')" ${!online && !connecting ? 'disabled' : ''}>
+                    <button class="btn-disconnect" onclick="disconnectBot('\${nick}')" \${!online && !connecting ? 'disabled' : ''}>
                       ❌ Desconectar
                     </button>
                   </div>
 
                 </div>
-              ` : `
+              \` : \`
                   <div class="connection-buttons">
-                    <button class="btn-connect" onclick="connectBot('${nick}')" ${connecting ? 'disabled' : ''}>
+                    <button class="btn-connect" onclick="connectBot('\${nick}')" \${connecting ? 'disabled' : ''}>
                       ✅ Conectar
                     </button>
-                    <button class="btn-disconnect" onclick="disconnectBot('${nick}')" ${!online && !connecting ? 'disabled' : ''}>
+                    <button class="btn-disconnect" onclick="disconnectBot('\${nick}')" \${!online && !connecting ? 'disabled' : ''}>
                       ❌ Desconectar
                     </button>
                   </div>
                 </div>
-              `}
-              `;
+              \`}
+              \`;
             }
 
             document.getElementById('individual').innerHTML = html;
@@ -1038,13 +1038,13 @@ const server = http.createServer((req, res) => {
 
             for(const log of toShow){
               const time = new Date(log.timestamp).toLocaleTimeString('pt-BR');
-              html += `
+              html += \`
                 <div class="message">
-                  <span class="message-time">[${time}]</span>
-                  <span class="message-bot">[${log.bot}]</span>
-                  <span class="message-text">${escapeHtml(log.message)}</span>
+                  <span class="message-time">[\${time}]</span>
+                  <span class="message-bot">[\${log.bot}]</span>
+                  <span class="message-text">\${escapeHtml(log.message)}</span>
                 </div>
-              `;
+              \`;
             }
 
             container.innerHTML = html;
