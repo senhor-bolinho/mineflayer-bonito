@@ -8,9 +8,12 @@ const SERVER_HOST = 'sd-br3.blazebr.com';
 const SERVER_PORT = 26280;
 
 const NICKS = [
-  'SrFlexxz_',
-  'SrDoardo_',
-  'SrZusdoz_',
+  'SrZNexuxz_',
+  'SryXyz_',
+  'SrAura_',
+  'SrBolao_',
+  'SrSigma_',
+  'SrBeta_',
 ];
 
 const PASSWORD = '123';
