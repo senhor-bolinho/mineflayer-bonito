@@ -7,23 +7,22 @@ const PORT = 10000;
 const SERVER_HOST = 'sd-br3.blazebr.com';
 const SERVER_PORT = 26280;
 
-const NICKS = [
-  'SrNevescc_',
-  'SrFlexxz_',
-  'SrDoardo_',
-  'SrZusdoz_',
-];
-
 const PASSWORD = '123';
 
 // ===== STORAGE =====
 let bots = [];
+let botNicks = []; // Nicks criados dinamicamente
 let disconnectLogs = [];
 let chatLogs = [];
 
 // ===== CRIAR BOT =====
 function createBot(username) {
   console.log(`🔄 Criando bot ${username}...`);
+
+  // Adicionar nick à lista se não existir
+  if (!botNicks.includes(username)) {
+    botNicks.push(username);
+  }
 
   const bot = mineflayer.createBot({
     host: SERVER_HOST,
@@ -110,6 +109,14 @@ function createBot(username) {
   });
 
   bots.push(bot);
+}
+
+// ===== REMOVER BOT DA LISTA =====
+function removeBot(username) {
+  const index = botNicks.indexOf(username);
+  if (index > -1) {
+    botNicks.splice(index, 1);
+  }
 }
 
 // ===== ADICIONAR LOG DE CHAT =====
@@ -261,6 +268,35 @@ const server = http.createServer((req, res) => {
           box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
         }
 
+        .create-bot-section {
+          background: #1e293b;
+          border: 2px solid #60a5fa;
+          border-radius: 8px;
+          padding: 20px;
+          margin-bottom: 30px;
+          text-align: center;
+        }
+
+        .create-bot-section h3 {
+          color: #60a5fa;
+          margin-bottom: 15px;
+        }
+
+        .create-bot-inputs {
+          display: flex;
+          gap: 10px;
+          justify-content: center;
+          flex-wrap: wrap;
+        }
+
+        .create-bot-inputs input {
+          min-width: 200px;
+        }
+
+        .create-bot-inputs button {
+          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
         .chat-input-section {
           text-align: center;
           margin-bottom: 30px;
@@ -290,6 +326,7 @@ const server = http.createServer((req, res) => {
           padding: 20px;
           transition: all 0.3s ease;
           box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+          position: relative;
         }
 
         .bot-card:hover {
@@ -297,11 +334,26 @@ const server = http.createServer((req, res) => {
           box-shadow: 0 8px 25px rgba(96, 165, 250, 0.2);
         }
 
+        .delete-bot-btn {
+          position: absolute;
+          top: 15px;
+          right: 15px;
+          background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+          padding: 6px 12px;
+          font-size: 12px;
+          border-radius: 6px;
+        }
+
+        .delete-bot-btn:hover {
+          transform: scale(1.05);
+        }
+
         .bot-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
           margin-bottom: 15px;
+          padding-right: 60px;
         }
 
         .bot-name {
@@ -501,6 +553,13 @@ const server = http.createServer((req, res) => {
           margin-top: 150px;
         }
 
+        .no-bots-message {
+          text-align: center;
+          padding: 40px;
+          color: #64748b;
+          font-size: 1.2em;
+        }
+
         @media (max-width: 768px) {
           .bots-grid {
             grid-template-columns: 1fr;
@@ -512,6 +571,15 @@ const server = http.createServer((req, res) => {
 
           h1 {
             font-size: 1.8em;
+          }
+
+          .create-bot-inputs {
+            flex-direction: column;
+          }
+
+          .create-bot-inputs input,
+          .create-bot-inputs button {
+            width: 100%;
           }
         }
 
@@ -537,13 +605,22 @@ const server = http.createServer((req, res) => {
       <div class="container">
         <h1>🤖 Dashboard Bot</h1>
 
-        <div class="controls-top">
-          <button onclick="api('/connect-all')">
-            ✅ Connect All
-          </button>
+        <div class="create-bot-section">
+          <h3>➕ Criar Novo Bot</h3>
+          <div class="create-bot-inputs">
+            <input 
+              type="text" 
+              id="newBotNick" 
+              placeholder="Digite o nick do bot..."
+              onkeypress="if(event.key==='Enter') createNewBot()"
+            />
+            <button onclick="createNewBot()">🆕 Criar Bot</button>
+          </div>
+        </div>
 
+        <div class="controls-top">
           <button onclick="api('/disconnect-all')">
-            ❌ Disconnect All
+            ❌ Desconectar Todos
           </button>
         </div>
 
@@ -576,7 +653,35 @@ const server = http.createServer((req, res) => {
       </div>
 
       <script>
-        const ALL_NICKS = ${JSON.stringify(NICKS)};
+        function createNewBot(){
+          const nick = document.getElementById('newBotNick').value.trim();
+
+          if (!nick) {
+            alert('Digite um nick para o bot!');
+            return;
+          }
+
+          if (nick.length < 3 || nick.length > 16) {
+            alert('O nick deve ter entre 3 e 16 caracteres!');
+            return;
+          }
+
+          fetch('/createbot?nick=' + encodeURIComponent(nick))
+            .then(r => r.json())
+            .then(d => {
+              if (d.error) {
+                alert('Erro: ' + d.error);
+              } else {
+                alert('Bot criado com sucesso!');
+                document.getElementById('newBotNick').value = '';
+                loadBots();
+              }
+            })
+            .catch(e => {
+              console.error(e);
+              alert('Erro ao criar bot');
+            });
+        }
 
         function api(route){
           fetch(route)
@@ -641,6 +746,24 @@ const server = http.createServer((req, res) => {
           .catch(e => console.error(e));
         }
 
+        function deleteBot(nick){
+          if (!confirm('Tem certeza que deseja deletar o bot ' + nick + '?')) {
+            return;
+          }
+
+          fetch('/deletebot?nick=' + encodeURIComponent(nick))
+            .then(r => r.json())
+            .then(d => {
+              if(d.error) {
+                alert('Erro: ' + d.error);
+              } else {
+                alert('Bot deletado!');
+                loadBots();
+              }
+            })
+            .catch(e => console.error(e));
+        }
+
         function sendChatIndividual(nick){
           const msg = document.getElementById('msg-' + nick).value;
 
@@ -688,7 +811,13 @@ const server = http.createServer((req, res) => {
 
             let html = '';
 
-            for(const nick of ALL_NICKS){
+            if(d.nicks && d.nicks.length === 0){
+              html = '<div class="no-bots-message">Nenhum bot criado ainda. Crie um novo bot acima!</div>';
+              document.getElementById('individual').innerHTML = html;
+              return;
+            }
+
+            for(const nick of (d.nicks || [])){
 
               const bot_data =
                 d.bots.find(
@@ -703,6 +832,10 @@ const server = http.createServer((req, res) => {
 
               html += \`
                 <div class="bot-card">
+
+                  <button class="delete-bot-btn" onclick="deleteBot('\${nick}')">
+                    🗑️ Deletar
+                  </button>
 
                   <div class="bot-header">
                     <div class="bot-name">\${nick}</div>
@@ -823,6 +956,7 @@ const server = http.createServer((req, res) => {
     return res.end(
       JSON.stringify({
         total: bots.length,
+        nicks: botNicks,
 
         online: bots.filter(
           b => b.ready
@@ -834,6 +968,92 @@ const server = http.createServer((req, res) => {
           position: b.position
         }))
       }, null, 2)
+    );
+  }
+
+  // ===== CRIAR BOT VIA ENDPOINT =====
+  if (path === '/createbot') {
+    const nick = q.nick;
+
+    if (!nick) {
+      return res.end(
+        JSON.stringify({
+          error: 'nick não informado'
+        })
+      );
+    }
+
+    if (nick.length < 3 || nick.length > 16) {
+      return res.end(
+        JSON.stringify({
+          error: 'nick deve ter entre 3 e 16 caracteres'
+        })
+      );
+    }
+
+    if (botNicks.includes(nick)) {
+      return res.end(
+        JSON.stringify({
+          error: 'bot com esse nick já existe'
+        })
+      );
+    }
+
+    if (bots.find(b => b.username === nick)) {
+      return res.end(
+        JSON.stringify({
+          error: 'bot já conectado'
+        })
+      );
+    }
+
+    try {
+      createBot(nick);
+      return res.end(
+        JSON.stringify({
+          created: nick,
+          message: 'Bot criado com sucesso'
+        })
+      );
+    } catch (err) {
+      return res.end(
+        JSON.stringify({
+          error: 'erro ao criar bot: ' + err.message
+        })
+      );
+    }
+  }
+
+  // ===== DELETAR BOT =====
+  if (path === '/deletebot') {
+    const nick = q.nick;
+
+    if (!nick) {
+      return res.end(
+        JSON.stringify({
+          error: 'nick não informado'
+        })
+      );
+    }
+
+    const bot = bots.find(b => b.username === nick);
+
+    if (bot) {
+      try {
+        bot.end();
+      } catch (err) {
+        console.error('Erro ao desconectar ' + nick + ':', err);
+      }
+      bots = bots.filter(b => b.username !== nick);
+    }
+
+    removeBot(nick);
+
+    return res.end(
+      JSON.stringify({
+        deleted: nick,
+        message: 'Bot deletado com sucesso'
+      })
     );
   }
 
@@ -880,10 +1100,10 @@ const server = http.createServer((req, res) => {
       );
     }
 
-    if (!NICKS.includes(nick)) {
+    if (!botNicks.includes(nick)) {
       return res.end(
         JSON.stringify({
-          error: 'nick não autorizado'
+          error: 'nick não existe'
         })
       );
     }
@@ -955,10 +1175,10 @@ const server = http.createServer((req, res) => {
       );
     }
 
-    if (!NICKS.includes(nick)) {
+    if (!botNicks.includes(nick)) {
       return res.end(
         JSON.stringify({
-          error: 'nick não autorizado'
+          error: 'nick não existe'
         })
       );
     }
@@ -1029,30 +1249,6 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // ===== CONNECT ALL =====
-  if (path === '/connect-all') {
-
-    const added = [];
-
-    for (const nick of NICKS) {
-
-      if (
-        !bots.find(
-          b => b.username === nick
-        )
-      ) {
-        createBot(nick);
-        added.push(nick);
-      }
-    }
-
-    return res.end(
-      JSON.stringify({
-        connecting: added
-      })
-    );
-  }
-
   // ===== DISCONNECT ALL =====
   if (path === '/disconnect-all') {
 
@@ -1089,10 +1285,10 @@ const server = http.createServer((req, res) => {
       );
     }
 
-    if (!NICKS.includes(nick)) {
+    if (!botNicks.includes(nick)) {
       return res.end(
         JSON.stringify({
-          error: 'nick não autorizado'
+          error: 'nick não existe'
         })
       );
     }
