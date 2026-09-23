@@ -1,1208 +1,411 @@
-const mineflayer = require('mineflayer');
-const http = require('http');
-const url = require('url');
+'use strict'
+/* ============================================================================
+   BOT MINEFLAYER (CONTA OFFLINE)  +  PAINEL WEB SIMPLES
+   ----------------------------------------------------------------------------
+   • Captura TODO e QUALQUER chat que aparecer na conta:
+       - chat público de jogadores
+       - /tell (whisper) recebido e enviado
+       - mensagens do SERVIDOR (system)  -> kick, avisos, plugins, broadcasts
+       - action bar (game_info)
+       - chat assinado (1.19+) e formatos customizados de rede (BlazeBR etc.)
+   • Comandos via TELL aceitos SOMENTE do dono (OWNER_NICK = "SrBoliin_")
+   • Painel web embutido: http://SEU_IP:PANEL_PORT  (login com senha)
+   • Editável pelo site: ip, porta, versão, nicks, dono, prefixo, senha...
 
-// ===== CONFIG =====
-const PORT = 10000;
-const SERVER_HOST = 'sd-br3.blazebr.com';
-const SERVER_PORT = 26280;
+   RODE:  npm install   e   npm start
+   ========================================================================== */
 
-const NICKS = [
-  'SrZNexuxz_',
-  'SryXyz_',
-  'SrAura_',
-  'SrBolao_',
-  'SrSigma_',
-  'SrBeta_',
-];
+const http = require('http')
+const fs = require('fs')
+const path = require('path')
+const url = require('url')
+const crypto = require('crypto')
+const mineflayer = require('mineflayer')
+const Vec3 = require('vec3').Vec3
 
-const PASSWORD = '123';
-
-// ===== STORAGE =====
-let bots = [];
-let disconnectLogs = [];
-let chatLogs = [];
-
-// ===== CRIAR BOT =====
-function createBot(username) {
-  console.log(`🔄 Criando bot ${username}...`);
-
-  const bot = mineflayer.createBot({
-    host: SERVER_HOST,
-    port: SERVER_PORT,
-    username,
-    auth: 'offline',
-    version: false
-  });
-
-  bot.ready = false;
-  bot.position = { x: 0, y: 0, z: 0 };
-
-  bot.on('login', () => {
-    console.log(`🔐 [${username}] LOGOU`);
-    addChatLog(username, '[SISTEMA] Bot logou');
-  });
-
-  bot.on('spawn', () => {
-    bot.ready = true;
-    console.log(`✅ [${username}] SPAWNOU (pronto)`);
-    addChatLog(username, '[SISTEMA] Bot spawnou');
-  });
-
-  bot.on('end', (reason) => {
-    bot.ready = false;
-
-    console.log(`❌ [${username}] DESCONECTADO:`, reason);
-
-    disconnectLogs.push({
-      bot: username,
-      reason: reason || 'unknown',
-      time: new Date().toISOString()
-    });
-  });
-
-  bot.on('kicked', (reason) => {
-    console.log(`🚫 [${username}] KICKADO:`, reason);
-
-    disconnectLogs.push({
-      bot: username,
-      reason: 'KICK: ' + JSON.stringify(reason),
-      time: new Date().toISOString()
-    });
-  });
-
-  bot.on('error', (err) => {
-    console.log(`⚠️ [${username}] ERRO COMPLETO:`, err);
-  });
-
-  // ===== EVENTOS DE CHAT =====
-  bot.on('chat', (username_chat, message) => {
-    if (username_chat !== bot.username) {
-      addChatLog(bot.username, `[${username_chat}] ${message}`);
-    }
-  });
-
-  bot.on('message', (message) => {
-    const msg_text = message.toString();
-    if (msg_text && msg_text.trim()) {
-      addChatLog(bot.username, msg_text);
-    }
-  });
-
-  bot.on('whisper', (username_whisper, message) => {
-    addChatLog(bot.username, `[PRIVADO ${username_whisper}] ${message}`);
-  });
-
-  bot.on('system message', (message) => {
-    const sys_msg = message.toString();
-    if (sys_msg && sys_msg.trim()) {
-      addChatLog(bot.username, `[SISTEMA] ${sys_msg}`);
-    }
-  });
-
-  // ===== POSIÇÃO =====
-  bot.on('move', () => {
-    if (bot.entity && bot.entity.position) {
-      bot.position = {
-        x: Math.round(bot.entity.position.x * 10) / 10,
-        y: Math.round(bot.entity.position.y * 10) / 10,
-        z: Math.round(bot.entity.position.z * 10) / 10
-      };
-    }
-  });
-
-  bots.push(bot);
+// pathfinder é opcional: deixa "!vim" / "!meseguir" / "!ir x y z" muito melhores
+let PF = null
+try {
+  PF = require('mineflayer-pathfinder')
+} catch (e) {
+  console.warn('[AVISO] mineflayer-pathfinder não carregado (usando andar manual):', e.message)
 }
 
-// ===== ADICIONAR LOG DE CHAT =====
-function addChatLog(bot_name, message) {
-  chatLogs.push({
-    bot: bot_name,
-    message: message,
-    timestamp: new Date().toISOString()
-  });
+/* ==========================================================================
+   1. CONFIG  (pode editar aqui OU pelo site - o site salva em data/config.json)
+   ========================================================================== */
 
-  // Manter histórico máximo
-  if (chatLogs.length > 1000) {
-    chatLogs.shift();
+const CONFIG_FILE = path.join(__dirname, 'data', 'config.json')
+const PANEL_FILE = path.join(__dirname, 'panel.html')
+
+const DEFAULT_CONFIG = {
+  // ---- servidor ----
+  SERVER_HOST: 'sd-br3.blazebr.com',
+  SERVER_PORT: 26280,
+  VERSION: false,              // false = detectar sozinho | '1.8.9' | '1.16.5' | '1.20.4' ...
+  VIEW_DISTANCE: 'normal',
+  CHECK_TIMEOUT: 60000,
+  HIDE_ERRORS: false,
+
+  // ---- contas (offline) ----
+  NICKS: ['SrZNexuxz_', 'SryXyz_', 'SrAura_', 'SrBolao_', 'SrSigma_', 'SrBeta_'],
+  AUTH: 'offline',             // 'offline' = conta pirata/cracked | 'microsoft' = conta original
+  AUTO_CONNECT: true,
+  AUTO_RECONNECT: true,
+  RECONNECT_DELAY: 5000,
+  RESPAWN: true,               // renascer sozinho ao morrer
+
+  // ---- dono / comandos ----
+  OWNER_NICK: 'SrBoliin_',     // SOMENTE esse nick pode mandar comando
+  EXTRA_OWNERS: [],            // nicks extras autorizados (opcional)
+  COMMAND_PREFIX: '!',
+  ONLY_VIA_TELL: false,        // true = só aceita comando por /tell (mais seguro)
+  ALLOW_PUBLIC_COMMANDS: true, // true = comando do dono no chat público funciona (afeta todos os bots)
+  LOOSE_OWNER_MATCH: true,     // true = reconhece o comando mesmo se o formato do /tell do servidor for estranho
+  REPLY_VIA_TELL: true,        // o bot responde o dono por /tell
+  REPLY_IN_CHAT: false,        // o bot responde no chat público
+  COMMAND_COOLDOWN: 300,       // ms entre comandos do mesmo bot
+
+  // ---- comportamento ----
+  FOLLOW_DISTANCE: 3,          // blocos de distância ao seguir / "vim"
+  WALK_SPRINT: true,           // correr quando anda pra frente
+  WALK_TIMEOUT: 60000,         // tempo máximo de um "!andar"
+  AUTO_JUMP: true,             // pular sozinho quando trava em bloco
+  STOP_ON_FALL: 6,             // para de andar se cair X blocos (evita morrer)
+  ATTACK_RANGE: 3.4,
+  ATTACK_INTERVAL: 450,
+
+  // ---- captura de chat ----
+  CAPTURE_ACTION_BAR: true,    // game_info (barra acima da hotbar)
+  CAPTURE_RAW_JSON: false,     // guarda o JSON cru da mensagem (debug de formato)
+  CAPTURE_COLORS: false,       // false = remove os códigos de cor (§) do texto exibido
+  MAX_CHAT_LOG: 3000,
+  MAX_SERVER_LOG: 800,
+  EXTRA_TELL_PATTERNS: [],     // regex (string) do formato de /tell do seu servidor, ex: "^De (\\w+): (.+)$"
+  IGNORE_PATTERNS: [],         // regex (string) para IGNORAR mensagens (ex. anti-spam de score)
+
+  // ---- painel ----
+  PANEL_PORT: 10000,
+  PANEL_HOST: '0.0.0.0',
+  PANEL_PASSWORD: '123',
+  CHAT_LENGTH_LIMIT: 0         // 0 = padrão do mineflayer | ex: 100 (1.8) / 256
+}
+
+let CONFIG = clone(DEFAULT_CONFIG)
+
+function clone (o) { return JSON.parse(JSON.stringify(o)) }
+
+function mergeDeep (base, extra) {
+  for (const k of Object.keys(extra || {})) {
+    const v = extra[k]
+    if (v && typeof v === 'object' && !Array.isArray(v) && typeof base[k] === 'object' && !Array.isArray(base[k])) mergeDeep(base[k], v)
+    else base[k] = v
+  }
+  return base
+}
+
+function loadConfig () {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const saved = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+      CONFIG = mergeDeep(clone(DEFAULT_CONFIG), saved)
+      logInfo('config carregada de data/config.json')
+    } else {
+      saveConfig()
+      logInfo('config padrão criada em data/config.json')
+    }
+  } catch (e) {
+    logError('falha ao ler config: ' + e.message)
   }
 }
 
-// ===== SERVER =====
-const server = http.createServer((req, res) => {
-  const parsed = url.parse(req.url, true);
+function saveConfig () {
+  try {
+    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true })
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2))
+    return true
+  } catch (e) {
+    logError('falha ao salvar config: ' + e.message)
+    return false
+  }
+}
 
-  const path = parsed.pathname;
-  const q = parsed.query;
+/* ==========================================================================
+   2. STORAGE
+   ========================================================================== */
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
+const bots = new Map()      // nick -> wrap { nick, bot, ready, status, position, ... }
+let chatLogs = []           // TUDO que passou no chat
+let serverLogs = []         // console/log do sistema
+let disconnectLogs = []     // quedas e kicks
+let logId = 0
+let msgId = 0
+const stats = { total: 0, chat: 0, tell: 0, system: 0, actionbar: 0, out: 0, cmd: 0, ignored: 0, unknownOwner: 0 }
+const tokens = new Map()    // sessão do painel
+const recentMsg = new Map() // anti-duplicata
+const lastCmdAt = new Map() // cooldown por bot
 
-  // ===== LOGIN =====
-  if (path === '/') {
-    res.setHeader('Content-Type', 'text/html');
+/* ==========================================================================
+   3. HELPERS
+   ========================================================================== */
 
-    return res.end(`
-    <body style="
-      background:#111;
-      color:white;
-      text-align:center;
-      margin-top:100px;
-      font-family:sans-serif;
-    ">
-      <h2>Login</h2>
+function ts (d = new Date()) {
+  return d.toLocaleTimeString('pt-BR', { hour12: false })
+}
 
-      <input type="password" id="p"/>
-      <button onclick="go()">Entrar</button>
+const COLORS = { reset: '\x1b[0m', gray: '\x1b[90m', red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m', blue: '\x1b[34m', magenta: '\x1b[35m', cyan: '\x1b[36m' }
 
-      <script>
-        function go(){
-          if(document.getElementById('p').value === "${PASSWORD}")
-            location='/panel';
-          else
-            alert('Senha errada');
-        }
-      </script>
-    </body>
-    `);
+function pushServerLog (level, msg) {
+  const entry = { id: ++logId, ts: Date.now(), level, msg: String(msg) }
+  serverLogs.push(entry)
+  if (serverLogs.length > CONFIG.MAX_SERVER_LOG) serverLogs = serverLogs.slice(-CONFIG.MAX_SERVER_LOG)
+  return entry
+}
+
+function logInfo (msg) { const e = pushServerLog('info', msg); console.log(`${COLORS.gray}[${ts(new Date(e.ts))}]${COLORS.reset} ${msg}`) }
+function logOk (msg) { const e = pushServerLog('ok', msg); console.log(`${COLORS.green}[${ts(new Date(e.ts))}] ✔ ${msg}${COLORS.reset}`) }
+function logWarn (msg) { const e = pushServerLog('warn', msg); console.log(`${COLORS.yellow}[${ts(new Date(e.ts))}] ⚠ ${msg}${COLORS.reset}`) }
+function logError (msg) { const e = pushServerLog('error', msg); console.log(`${COLORS.red}[${ts(new Date(e.ts))}] ✖ ${msg}${COLORS.reset}`) }
+
+// remove códigos de cor do minecraft (§a, §l, §r ...)
+function stripColors (s) {
+  return String(s === undefined || s === null ? '' : s).replace(/§[0-9a-fk-orx]/gi, '').replace(/§/g, '')
+}
+
+function cleanText (s) {
+  const raw = String(s === undefined || s === null ? '' : s)
+  return CONFIG.CAPTURE_COLORS ? raw : stripColors(raw).replace(/\s+/g, ' ').trim()
+}
+
+function normalize (s) {
+  return stripColors(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')
+}
+
+function sameNick (a, b) {
+  if (!a || !b) return false
+  return normalize(a) === normalize(b)
+}
+
+function isOwner (nick) {
+  if (!nick) return false
+  if (sameNick(nick, CONFIG.OWNER_NICK)) return true
+  return (CONFIG.EXTRA_OWNERS || []).some(o => sameNick(nick, o))
+}
+
+function escRe (s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+function sleep (ms) { return new Promise(r => setTimeout(r, ms)) }
+function clamp (v, a, b) { return Math.max(a, Math.min(b, v)) }
+function round1 (v) { return Math.round(Number(v || 0) * 10) / 10 }
+
+function chunkText (text, size = 200) {
+  const out = []
+  let s = String(text)
+  while (s.length > size) {
+    let cut = s.lastIndexOf(' ', size)
+    if (cut < size * 0.5) cut = size
+    out.push(s.slice(0, cut))
+    s = s.slice(cut).trim()
+  }
+  if (s.length) out.push(s)
+  return out
+}
+
+function addChatLog (botNick, text, kind = 'chat', extra = {}) {
+  const entry = {
+    id: ++msgId,
+    ts: Date.now(),
+    bot: botNick,
+    kind,                       // chat | tell | system | actionbar | out | cmd | reply | event
+    from: extra.from || null,
+    to: extra.to || null,
+    text: cleanText(text),
+    raw: CONFIG.CAPTURE_RAW_JSON && extra.raw ? safeJson(extra.raw) : undefined,
+    cmd: extra.cmd || null,
+    ignored: !!extra.ignored
+  }
+  if (!entry.text) return null
+  chatLogs.push(entry)
+  if (chatLogs.length > CONFIG.MAX_CHAT_LOG) chatLogs = chatLogs.slice(-CONFIG.MAX_CHAT_LOG)
+  stats.total++
+  if (stats[entry.kind] !== undefined) stats[entry.kind]++
+  return entry
+}
+
+function safeJson (o) { try { return JSON.stringify(o) } catch (e) { return undefined } }
+
+function pushDisconnect (nick, reason) {
+  disconnectLogs.push({ bot: nick, reason: String(reason || 'desconhecido'), ts: Date.now() })
+  if (disconnectLogs.length > 200) disconnectLogs = disconnectLogs.slice(-200)
+}
+
+/* ==========================================================================
+   4. CAPTURA TOTAL DE CHAT
+   ----------------------------------------------------------------------------
+   O mineflayer emite:
+     'messagestr' (texto, posição, msgOriginal, sender, verificado)
+        posição = 'chat' | 'system' | 'game_info'
+     'message'    (objeto ChatMessage)
+     'actionBar'  (game_info)
+     'chat'       (nick, msg)   -> quando bate o padrão vanilla de chat público
+     'whisper'    (nick, msg)   -> quando bate o padrão vanilla de /tell
+   A gente usa o 'messagestr' como fonte principal (pega TUDO, inclusive
+   mensagem do servidor) e o 'chat'/'whisper' como reforço p/ descobrir o nick.
+   ========================================================================== */
+
+// formatos de /tell (whisper) - vanilla, PT-BR e redes customizadas
+const TELL_REGEXES = [
+  /^\[?\s*(\w{1,16})\s*(?:->|→|»+>|»|>|>>)\s*(?:eu|me|mim|\w{1,16})\s*\]?\s*[:\-–]?\s*(.+)$/i,
+  /^\(\s*(\w{1,16})\s*(?:->|→|»|>)\s*(?:eu|me|mim|\w{1,16})\s*\)\s*[:\-–]?\s*(.+)$/i,
+  /^(\w{1,16})\s+(?:whispers?(?:\s+to\s+you)?|sussurra(?:rou)?(?:\s+(?:para|pra|a)\s+você)?|murmura(?:\s+(?:para|pra)\s+você)?|cuchicha(?:\s+para\s+ti)?)\s*[:\-–]?\s*(.+)$/i,
+  /^De\s+(\w{1,16})\s*[:\-–»>]\s*(.+)$/i,
+  /^(?:Mensagem|Msg|MP|PM|W)\s+(?:de|from|para|to)?\s*(\w{1,16})\s*[:\-–»>]\s*(.+)$/i,
+  /^\[\s*(\w{1,16})\s*\]\s*(?:sussurra|whispers?|diz|fala|->|→)\s*[:\-–]?\s*(.+)$/i,
+  /^(\w{1,16})\s+(?:->|→)\s*(?:eu|\w{1,16})\s*[:\-–]?\s*(.+)$/i
+]
+
+// formatos de chat público (pra saber QUEM falou)
+const CHAT_REGEXES = [
+  /^<\s*(\w{1,16})\s*>\s*(.+)$/,
+  /^\[\s*(\w{1,16})\s*\]\s*(?:»|>|:|\||-|~)?\s*(.+)$/,
+  /^\(\s*(\w{1,16})\s*\)\s*(?:»|>|:|\||-|~)?\s*(.+)$/,
+  /^(?:\[[^\]]{0,24}\]\s*){0,4}(\w{1,16})\s*(?:»|>|:|\||~|-)\s+(.+)$/,
+  /^(\w{1,16})\s*[:»]\s*(.+)$/
+]
+
+// saída do NOSSO /tell (quando o bot sussurra alguém)
+const OUT_TELL_REGEXES = [
+  /^\[?(?:eu|me|\w{1,16})\s*(?:->|→|»|>)\s*(\w{1,16})\s*\]?\s*[:\-–]?\s*(.+)$/i,
+  /^Para\s+(\w{1,16})\s*[:\-–»>]\s*(.+)$/i,
+  /^(?:You whisper to|Você sussurra(?:rou)? para|Susurraste a)\s+(\w{1,16})\s*[:\-–]?\s*(.+)$/i
+]
+
+function extraRegexes (list) {
+  const out = []
+  for (const p of list || []) {
+    try { out.push(new RegExp(p, 'i')) } catch (e) { /* regex inválida */ }
+  }
+  return out
+}
+
+function matchFirst (regexes, text) {
+  for (const re of regexes) {
+    const m = text.match(re)
+    if (m) return m
+  }
+  return null
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Resolve o sender do pacote (pode vir UUID nas versões 1.19+) */
+function resolveSender (bot, sender) {
+  if (!sender) return null
+  const s = String(typeof sender === 'object' && sender !== null ? (sender.toString ? sender.toString() : '') : sender)
+  if (!s) return null
+  if (UUID_RE.test(s)) {
+    const p = Object.values(bot.players || {}).find(pl => pl && pl.uuid && String(pl.uuid).toLowerCase() === s.toLowerCase())
+    return p ? p.username : null
+  }
+  if (/^\w{1,16}$/.test(s)) return s
+  return null
+}
+
+/**
+ * Descobre tipo/quem/texto de uma mensagem qualquer.
+ * kind: tell | out_tell | chat | system | actionbar
+ */
+function parseMessage (bot, text, position, sender) {
+  const clean = stripColors(text).replace(/\s+/g, ' ').trim()
+  const out = { kind: 'system', from: null, to: null, body: clean }
+
+  if (position === 'game_info') { out.kind = 'actionbar'; return out }
+
+  const resolved = resolveSender(bot, sender)
+
+  // 1) nosso próprio /tell saindo
+  let m = matchFirst(OUT_TELL_REGEXES, clean)
+  if (m) { out.kind = 'out_tell'; out.to = m[1]; out.body = m[2].trim(); return out }
+
+  // 2) /tell recebido
+  m = matchFirst([...TELL_REGEXES, ...extraRegexes(CONFIG.EXTRA_TELL_PATTERNS)], clean)
+  if (m) { out.kind = 'tell'; out.from = m[1]; out.to = m[2] ? bot.username : null; out.body = (m[2] || '').trim(); return out }
+
+  // 3) whisper detectado pelo próprio mineflayer (sender resolvido)
+  if (position === 'chat' && resolved && isOwner(resolved)) { out.kind = 'chat'; out.from = resolved; out.body = clean; return out }
+
+  // 4) system (mensagem do servidor: kick, aviso, plugin, broadcast, morte...)
+  if (position === 'system') {
+    out.kind = 'system'
+    // mesmo em system, tenta achar um nick de jogador no começo ("Fulano saiu do jogo")
+    const sm = clean.match(/^(\w{1,16})\s/)
+    out.from = sm ? sm[1] : null
+    out.body = clean
+    return out
   }
 
-  // ===== PAINEL =====
-  if (path === '/panel') {
-    res.setHeader('Content-Type', 'text/html');
-
-    return res.end(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Dashboard Bot</title>
-      <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-
-        body {
-          background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-          color: #e2e8f0;
-          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          min-height: 100vh;
-          padding: 20px;
-        }
-
-        .container {
-          max-width: 1400px;
-          margin: 0 auto;
-        }
-
-        h1 {
-          text-align: center;
-          margin-bottom: 30px;
-          font-size: 2.5em;
-          color: #60a5fa;
-          text-shadow: 0 0 10px rgba(96, 165, 250, 0.3);
-        }
-
-        h2 {
-          color: #60a5fa;
-          margin-bottom: 20px;
-          border-bottom: 2px solid #334155;
-          padding-bottom: 10px;
-          font-size: 1.5em;
-        }
-
-        .controls-top {
-          display: flex;
-          gap: 10px;
-          justify-content: center;
-          margin-bottom: 30px;
-          flex-wrap: wrap;
-        }
-
-        button {
-          background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-          color: white;
-          border: none;
-          padding: 12px 24px;
-          border-radius: 8px;
-          cursor: pointer;
-          font-size: 14px;
-          font-weight: 600;
-          transition: all 0.3s ease;
-          box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
-        }
-
-        button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6);
-        }
-
-        button:active {
-          transform: translateY(0);
-        }
-
-        input[type="text"],
-        input[type="password"],
-        textarea {
-          background: #1e293b;
-          color: #e2e8f0;
-          border: 2px solid #334155;
-          padding: 10px;
-          border-radius: 6px;
-          font-size: 14px;
-          transition: all 0.3s ease;
-        }
-
-        input[type="text"]:focus,
-        input[type="password"]:focus,
-        textarea:focus {
-          outline: none;
-          border-color: #3b82f6;
-          box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
-        }
-
-        .chat-input-section {
-          text-align: center;
-          margin-bottom: 30px;
-          padding: 15px;
-          background: #1e293b;
-          border-radius: 8px;
-          border: 1px solid #334155;
-        }
-
-        .chat-input-section input {
-          width: 100%;
-          max-width: 500px;
-          margin-right: 10px;
-        }
-
-        .bots-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-          gap: 20px;
-          margin-bottom: 30px;
-        }
-
-        .bot-card {
-          background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-          border: 2px solid #334155;
-          border-radius: 12px;
-          padding: 20px;
-          transition: all 0.3s ease;
-          box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-        }
-
-        .bot-card:hover {
-          border-color: #60a5fa;
-          box-shadow: 0 8px 25px rgba(96, 165, 250, 0.2);
-        }
-
-        .bot-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 15px;
-        }
-
-        .bot-name {
-          font-size: 1.3em;
-          font-weight: bold;
-          color: #e2e8f0;
-        }
-
-        .status-badge {
-          padding: 6px 12px;
-          border-radius: 20px;
-          font-size: 12px;
-          font-weight: 600;
-        }
-
-        .status-online {
-          background: #10b981;
-          color: white;
-        }
-
-        .status-offline {
-          background: #ef4444;
-          color: white;
-        }
-
-        .bot-position {
-          background: #0f172a;
-          padding: 10px;
-          border-radius: 6px;
-          margin-bottom: 15px;
-          font-family: monospace;
-          font-size: 12px;
-          color: #60a5fa;
-          border-left: 3px solid #60a5fa;
-        }
-
-        .position-label {
-          color: #94a3b8;
-          font-weight: 600;
-          margin-bottom: 5px;
-        }
-
-        .movement-controls {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 8px;
-          margin-bottom: 15px;
-        }
-
-        .movement-btn {
-          padding: 10px;
-          font-size: 18px;
-          background: #475569;
-          border: 2px solid #64748b;
-          border-radius: 6px;
-          color: white;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .movement-btn:hover {
-          background: #64748b;
-          border-color: #94a3b8;
-        }
-
-        .movement-btn:active {
-          transform: scale(0.95);
-        }
-
-        .empty {
-          grid-column: 1;
-        }
-
-        .chat-section {
-          margin-bottom: 15px;
-        }
-
-        .chat-label {
-          color: #94a3b8;
-          font-size: 12px;
-          font-weight: 600;
-          margin-bottom: 5px;
-          display: block;
-        }
-
-        .chat-input-group {
-          display: flex;
-          gap: 8px;
-        }
-
-        .chat-input-group input {
-          flex: 1;
-          padding: 8px;
-          font-size: 13px;
-        }
-
-        .chat-input-group button {
-          padding: 8px 16px;
-          font-size: 13px;
-          white-space: nowrap;
-        }
-
-        .connection-buttons {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-        }
-
-        .connection-buttons button {
-          padding: 10px;
-          font-size: 13px;
-        }
-
-        .btn-connect {
-          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        }
-
-        .btn-disconnect {
-          background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        }
-
-        .logs-section {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 20px;
-          margin-bottom: 30px;
-        }
-
-        .log-box {
-          background: #1e293b;
-          border: 1px solid #334155;
-          border-radius: 8px;
-          padding: 15px;
-          max-height: 400px;
-          overflow-y: auto;
-        }
-
-        .log-box h3 {
-          color: #60a5fa;
-          margin-bottom: 10px;
-          font-size: 1.1em;
-        }
-
-        .log-box pre {
-          background: #0f172a;
-          padding: 10px;
-          border-radius: 6px;
-          font-size: 11px;
-          color: #94a3b8;
-          overflow-x: auto;
-        }
-
-        .chat-live-section {
-          background: #1e293b;
-          border: 2px solid #334155;
-          border-radius: 8px;
-          padding: 15px;
-          margin-bottom: 30px;
-        }
-
-        .chat-messages {
-          background: #0f172a;
-          border-radius: 6px;
-          padding: 15px;
-          height: 400px;
-          overflow-y: auto;
-          font-family: monospace;
-          font-size: 12px;
-          border: 1px solid #334155;
-        }
-
-        .message {
-          color: #cbd5e1;
-          margin-bottom: 8px;
-          padding: 5px;
-          border-left: 2px solid #475569;
-          padding-left: 10px;
-        }
-
-        .message-time {
-          color: #64748b;
-          font-weight: 600;
-        }
-
-        .message-bot {
-          color: #60a5fa;
-          font-weight: 600;
-        }
-
-        .message-text {
-          color: #cbd5e1;
-        }
-
-        .no-messages {
-          color: #64748b;
-          text-align: center;
-          margin-top: 150px;
-        }
-
-        @media (max-width: 768px) {
-          .bots-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .logs-section {
-            grid-template-columns: 1fr;
-          }
-
-          h1 {
-            font-size: 1.8em;
-          }
-        }
-
-        ::-webkit-scrollbar {
-          width: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-          background: #0f172a;
-        }
-
-        ::-webkit-scrollbar-thumb {
-          background: #475569;
-          border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-          background: #64748b;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>🤖 Dashboard Bot</h1>
-
-        <div class="controls-top">
-          <button onclick="api('/connect-all')">
-            ✅ Connect All
-          </button>
-
-          <button onclick="api('/disconnect-all')">
-            ❌ Disconnect All
-          </button>
-        </div>
-
-        <div class="chat-input-section">
-          <input id="msg" type="text" placeholder="Enviar mensagem para todos os bots..."/>
-          <button onclick="chatAll()">📤 Enviar Chat para Todos</button>
-        </div>
-
-        <div class="chat-live-section">
-          <h2>💬 Chat ao Vivo</h2>
-          <div class="chat-messages" id="chatMessages">
-            <div class="no-messages">Aguardando mensagens...</div>
-          </div>
-        </div>
-
-        <h2>🎮 Controle Individual</h2>
-        <div class="bots-grid" id="individual"></div>
-
-        <div class="logs-section">
-          <div class="log-box">
-            <h3>📊 Status dos Bots</h3>
-            <pre id="bots">Carregando...</pre>
-          </div>
-
-          <div class="log-box">
-            <h3>⚠️ Desconexões / Kicks</h3>
-            <pre id="logs">Nenhuma desconexão registrada</pre>
-          </div>
-        </div>
-      </div>
-
-      <script>
-        const ALL_NICKS = ${JSON.stringify(NICKS)};
-
-        function api(route){
-          fetch(route)
-            .then(r => r.json())
-            .then(d => {
-              if(d.error) {
-                alert('Erro: ' + d.error);
-              } else {
-                console.log(JSON.stringify(d, null, 2));
-              }
-            })
-            .catch(e => console.error(e));
-        }
-
-        function chatAll(){
-          const m = document.getElementById('msg').value;
-
-          if (!m.trim()) {
-            alert('Digite uma mensagem!');
-            return;
-          }
-
-          fetch(
-            '/chat-all?message=' +
-            encodeURIComponent(m)
-          )
-          .then(r => r.json())
-          .then(d => {
-            console.log(d);
-            document.getElementById('msg').value = '';
-          })
-          .catch(e => console.error(e));
-        }
-
-        function connectBot(nick){
-          fetch(
-            '/connect?nick=' +
-            encodeURIComponent(nick)
-          )
-          .then(r=>r.json())
-          .then(d => {
-            if(d.error) {
-              alert('Erro: ' + d.error);
-            }
-            loadBots();
-          })
-          .catch(e => console.error(e));
-        }
-
-        function disconnectBot(nick){
-          fetch(
-            '/disconnect?nick=' +
-            encodeURIComponent(nick)
-          )
-          .then(r=>r.json())
-          .then(d => {
-            if(d.error) {
-              alert('Erro: ' + d.error);
-            }
-            loadBots();
-          })
-          .catch(e => console.error(e));
-        }
-
-        function sendChatIndividual(nick){
-          const msg = document.getElementById('msg-' + nick).value;
-
-          if (!msg.trim()) {
-            alert('Digite uma mensagem!');
-            return;
-          }
-
-          fetch(
-            '/chat?nick=' + encodeURIComponent(nick) +
-            '&message=' + encodeURIComponent(msg)
-          )
-          .then(r => r.json())
-          .then(d => {
-            if(d.error) {
-              alert('Erro: ' + d.error);
-            } else {
-              document.getElementById('msg-' + nick).value = '';
-            }
-          })
-          .catch(e => console.error(e));
-        }
-
-        function moveBot(nick, dir){
-          fetch(
-            '/move?nick=' + encodeURIComponent(nick) +
-            '&dir=' + encodeURIComponent(dir)
-          )
-          .then(r => r.json())
-          .then(d => {
-            if(d.error) {
-              console.error('Erro ao mover:', d.error);
-            }
-          })
-          .catch(e => console.error(e));
-        }
-
-        function loadBots(){
-          fetch('/check')
-          .then(r=>r.json())
-          .then(d=>{
-
-            document.getElementById('bots').innerText =
-              JSON.stringify(d,null,2);
-
-            let html = '';
-
-            for(const nick of ALL_NICKS){
-
-              const bot_data =
-                d.bots.find(
-                  b => b.username === nick
-                );
-
-              const online = bot_data && bot_data.ready;
-
-              const posX = bot_data && bot_data.position ? bot_data.position.x : '-';
-              const posY = bot_data && bot_data.position ? bot_data.position.y : '-';
-              const posZ = bot_data && bot_data.position ? bot_data.position.z : '-';
-
-              html += \`
-                <div class="bot-card">
-
-                  <div class="bot-header">
-                    <div class="bot-name">\${nick}</div>
-                    <div class="status-badge \${online ? 'status-online' : 'status-offline'}">
-                      \${online ? '🟢 ONLINE' : '🔴 OFFLINE'}
-                    </div>
-                  </div>
-
-                  <div class="bot-position">
-                    <div class="position-label">📍 Posição Atual:</div>
-                    <div>X: \${posX}</div>
-                    <div>Y: \${posY}</div>
-                    <div>Z: \${posZ}</div>
-                  </div>
-
-                  <div class="movement-controls">
-                    <div class="empty"></div>
-                    <button class="movement-btn" onclick="moveBot('\${nick}', 'forward')" title="Frente">⬆️</button>
-                    <div class="empty"></div>
-
-                    <button class="movement-btn" onclick="moveBot('\${nick}', 'left')" title="Esquerda">⬅️</button>
-                    <button class="movement-btn" onclick="moveBot('\${nick}', 'jump')" title="Pular">⤒</button>
-                    <button class="movement-btn" onclick="moveBot('\${nick}', 'right')" title="Direita">➡️</button>
-
-                    <div class="empty"></div>
-                    <button class="movement-btn" onclick="moveBot('\${nick}', 'back')" title="Trás">⬇️</button>
-                    <div class="empty"></div>
-                  </div>
-
-                  <div class="chat-section">
-                    <label class="chat-label">Enviar Mensagem:</label>
-                    <div class="chat-input-group">
-                      <input 
-                        type="text" 
-                        id="msg-\${nick}"
-                        placeholder="Mensagem..."
-                      />
-                      <button onclick="sendChatIndividual('\${nick}')">📨 Enviar</button>
-                    </div>
-                  </div>
-
-                  <div class="connection-buttons">
-                    <button class="btn-connect" onclick="connectBot('\${nick}')">
-                      ✅ Conectar
-                    </button>
-                    <button class="btn-disconnect" onclick="disconnectBot('\${nick}')">
-                      ❌ Desconectar
-                    </button>
-                  </div>
-
-                </div>
-              \`;
-            }
-
-            document.getElementById('individual').innerHTML = html;
-          })
-          .catch(e => console.error(e));
-        }
-
-        function loadChatLogs(){
-          fetch('/chatlogs')
-          .then(r => r.json())
-          .then(d => {
-            const container = document.getElementById('chatMessages');
-
-            if(!d || d.length === 0){
-              container.innerHTML = '<div class="no-messages">Nenhuma mensagem ainda</div>';
-              return;
-            }
-
-            let html = '';
-
-            const toShow = d.slice(-500).reverse();
-
-            for(const log of toShow){
-              const time = new Date(log.timestamp).toLocaleTimeString('pt-BR');
-              html += \`
-                <div class="message">
-                  <span class="message-time">[\${time}]</span>
-                  <span class="message-bot">[\${log.bot}]</span>
-                  <span class="message-text">\${escapeHtml(log.message)}</span>
-                </div>
-              \`;
-            }
-
-            container.innerHTML = html;
-            container.scrollTop = container.scrollHeight;
-          })
-          .catch(e => console.error(e));
-        }
-
-        function escapeHtml(text) {
-          const div = document.createElement('div');
-          div.textContent = text;
-          return div.innerHTML;
-        }
-
-        setInterval(loadBots, 2000);
-        setInterval(loadChatLogs, 1000);
-
-        loadBots();
-        loadChatLogs();
-
-      </script>
-
-    </body>
-    </html>
-    `);
+  // 5) chat público
+  m = matchFirst(CHAT_REGEXES, clean)
+  if (m) { out.kind = 'chat'; out.from = m[1]; out.body = (m[2] || '').trim(); return out }
+
+  out.kind = 'chat'
+  out.from = resolved
+  out.body = clean
+  return out
+}
+
+/** Indício de que a mensagem é um /tell (usado no modo "loose") */
+function hasTellHint (text) {
+  return /->|→|»|whisper|sussurr|murmur|\bde\b|\bpara\b|\btell\b|\bmsg\b|\bmp\b/i.test(text)
+}
+
+/**
+ * ENTRADA ÚNICA de toda mensagem que o bot enxerga.
+ * Deduplica (messagestr + chat/whisper chegam juntos) e enriquece o remetente.
+ */
+function ingest (wrap, { text, position = 'chat', sender = null, forcedKind = null, forcedFrom = null, raw = null }) {
+  if (!wrap) return null
+  const full = String(text === undefined || text === null ? '' : text)
+  if (!full.trim()) return null
+
+  const clean = stripColors(full).replace(/\s+/g, ' ').trim()
+  const key = wrap.nick + '|' + position + '|' + clean
+  const now = Date.now()
+
+  // duplicata (mesmo pacote chegou por 2 eventos) -> só enriquece
+  const prev = recentMsg.get(key)
+  if (prev && now - prev.ts < 600) {
+    const e = prev.entry
+    if (forcedFrom && !e.from) {
+      e.from = forcedFrom
+      e.kind = forcedKind === 'tell' ? 'tell' : (forcedKind || e.kind)
+      tryRunCommand(wrap, e)
+    }
+    return e
   }
 
-  res.setHeader(
-    'Content-Type',
-    'application/json'
-  );
+  const parsed = parseMessage(wrap.bot, full, position, sender)
+  const kind = forcedKind === 'tell' ? 'tell' : (parsed.kind === 'out_tell' ? 'out' : parsed.kind)
+  const from = forcedFrom || parsed.from
 
-  // ===== CHECK =====
-  if (path === '/check') {
-    return res.end(
-      JSON.stringify({
-        total: bots.length,
-
-        online: bots.filter(
-          b => b.ready
-        ).length,
-
-        bots: bots.map(b => ({
-          username: b.username,
-          ready: b.ready,
-          position: b.position
-        }))
-      }, null, 2)
-    );
+  // filtros de ignore
+  for (const re of extraRegexes(CONFIG.IGNORE_PATTERNS)) {
+    if (re.test(clean)) { stats.ignored++; return null }
   }
 
-  // ===== LOGS =====
-  if (path === '/disconnects') {
-    return res.end(
-      JSON.stringify(
-        disconnectLogs,
-        null,
-        2
-      )
-    );
+  const entry = addChatLog(wrap.nick, full, kind, {
+    from,
+    to: parsed.to,
+    raw,
+    ignored: false
+  })
+  if (!entry) return null
+
+  recentMsg.set(key, { entry, ts: now })
+  if (recentMsg.size > 400) {
+    const firstKey = recentMsg.keys().next().value
+    recentMsg.delete(firstKey)
   }
 
-  // ===== CHAT LOGS =====
-  if (path === '/chatlogs') {
-    return res.end(
-      JSON.stringify(
-        chatLogs,
-        null,
-        2
-      )
-    );
-  }
-
-  // ===== CHAT INDIVIDUAL =====
-  if (path === '/chat') {
-    const nick = q.nick;
-    const message = q.message;
-
-    if (!nick) {
-      return res.end(
-        JSON.stringify({
-          error: 'nick não informado'
-        })
-      );
-    }
-
-    if (!message) {
-      return res.end(
-        JSON.stringify({
-          error: 'message não informada'
-        })
-      );
-    }
-
-    if (!NICKS.includes(nick)) {
-      return res.end(
-        JSON.stringify({
-          error: 'nick não autorizado'
-        })
-      );
-    }
-
-    const bot = bots.find(b => b.username === nick);
-
-    if (!bot) {
-      return res.end(
-        JSON.stringify({
-          error: 'bot não encontrado'
-        })
-      );
-    }
-
-    if (!bot.ready) {
-      return res.end(
-        JSON.stringify({
-          error: 'bot não está pronto'
-        })
-      );
-    }
-
-    try {
-      bot.chat(message);
-
-      return res.end(
-        JSON.stringify({
-          sent: nick,
-          message: message
-        })
-      );
-    } catch (err) {
-      return res.end(
-        JSON.stringify({
-          error: 'erro ao enviar mensagem: ' + err.message
-        })
-      );
-    }
-  }
-
-  // ===== MOVE =====
-  if (path === '/move') {
-    const nick = q.nick;
-    const dir = q.dir;
-
-    if (!nick) {
-      return res.end(
-        JSON.stringify({
-          error: 'nick não informado'
-        })
-      );
-    }
-
-    if (!dir) {
-      return res.end(
-        JSON.stringify({
-          error: 'direction não informada'
-        })
-      );
-    }
-
-    const validDirections = ['forward', 'back', 'left', 'right', 'jump'];
-
-    if (!validDirections.includes(dir)) {
-      return res.end(
-        JSON.stringify({
-          error: 'direção inválida: ' + dir
-        })
-      );
-    }
-
-    if (!NICKS.includes(nick)) {
-      return res.end(
-        JSON.stringify({
-          error: 'nick não autorizado'
-        })
-      );
-    }
-
-    const bot = bots.find(b => b.username === nick);
-
-    if (!bot) {
-      return res.end(
-        JSON.stringify({
-          error: 'bot não encontrado'
-        })
-      );
-    }
-
-    if (!bot.ready) {
-      return res.end(
-        JSON.stringify({
-          error: 'bot não está pronto'
-        })
-      );
-    }
-
-    try {
-      const control = bot.getControlState();
-
-      switch(dir) {
-        case 'forward':
-          control.forward = true;
-          break;
-        case 'back':
-          control.back = true;
-          break;
-        case 'left':
-          control.left = true;
-          break;
-        case 'right':
-          control.right = true;
-          break;
-        case 'jump':
-          control.jump = true;
-          break;
-      }
-
-      bot.setControlState(control);
-
-      setTimeout(() => {
-        const resetControl = bot.getControlState();
-        resetControl.forward = false;
-        resetControl.back = false;
-        resetControl.left = false;
-        resetControl.right = false;
-        resetControl.jump = false;
-        bot.setControlState(resetControl);
-      }, 100);
-
-      return res.end(
-        JSON.stringify({
-          moved: nick,
-          direction: dir
-        })
-      );
-    } catch (err) {
-      return res.end(
-        JSON.stringify({
-          error: 'erro ao mover: ' + err.message
-        })
-      );
-    }
-  }
-
-  // ===== CONNECT ALL =====
-  if (path === '/connect-all') {
-
-    const added = [];
-
-    for (const nick of NICKS) {
-
-      if (
-        !bots.find(
-          b => b.username === nick
-        )
-      ) {
-        createBot(nick);
-        added.push(nick);
-      }
-    }
-
-    return res.end(
-      JSON.stringify({
-        connecting: added
-      })
-    );
-  }
-
-  // ===== DISCONNECT ALL =====
-  if (path === '/disconnect-all') {
-
-    const names =
-      bots.map(b => b.username);
-
-    bots.forEach(b => {
-      try {
-        b.end();
-      } catch (err) {
-        console.error('Erro ao desconectar ' + b.username + ':', err);
-      }
-    });
-
-    bots = [];
-
-    return res.end(
-      JSON.stringify({
-        disconnected: names
-      })
-    );
-  }
-
-  // ===== CONNECT INDIVIDUAL =====
-  if (path === '/connect') {
-
-    const nick = q.nick;
-
-    if (!nick) {
-      return res.end(
-        JSON.stringify({
-          error: 'nick não informado'
-        })
-      );
-    }
-
-    if (!NICKS.includes(nick)) {
-      return res.end(
-        JSON.stringify({
-          error: 'nick não autorizado'
-        })
-      );
-    }
-
-    if (
-      bots.find(
-        b => b.username === nick
-      )
-    ) {
-      return res.end(
-        JSON.stringify({
-          error: 'bot já conectado'
-        })
-      );
-    }
-
-    createBot(nick);
-
-    return res.end(
-      JSON.stringify({
-        connected: nick
-      })
-    );
-  }
-
-  // ===== DISCONNECT INDIVIDUAL =====
-  if (path === '/disconnect') {
-
-    const nick = q.nick;
-
-    const bot =
-      bots.find(
-        b => b.username === nick
-      );
-
-    if (!bot) {
-      return res.end(
-        JSON.stringify({
-          error: 'bot não encontrado'
-        })
-      );
-    }
-
-    try {
-      bot.end();
-    } catch (err) {
-      console.error('Erro ao desconectar ' + nick + ':', err);
-    }
-
-    bots =
-      bots.filter(
-        b => b.username !== nick
-      );
-
-    return res.end(
-      JSON.stringify({
-        disconnected: nick
-      })
-    );
-  }
-
-  // ===== CHAT ALL =====
-  if (path === '/chat-all') {
-
-    const { message } = q;
-
-    if (!message) {
-      return res.end(
-        JSON.stringify({
-          error: 'message não informada'
-        })
-      );
-    }
-
-    const sent = [];
-
-    bots.forEach(bot => {
-
-      if (bot.ready) {
-        try {
-          bot.chat(message);
-          sent.push(
-            bot.username
-          );
-        } catch (err) {
-          console.error('Erro ao enviar chat do ' + bot.username + ':', err);
-        }
-      }
-    });
-
-    return res.end(
-      JSON.stringify({
-        sent
-      })
-    );
-  }
-
-  // ===== 404 =====
-  res.end(
-    JSON.stringify({
-      error: 'rota inválida'
-    })
-  );
-});
-
-// ===== START =====
-server.listen(PORT, () => {
-  console.log(
-    `🚀 http://localhost:${PORT}`
-  );
-});
+  tryRunCommand(wrap, entry)
+  return entry
+}
